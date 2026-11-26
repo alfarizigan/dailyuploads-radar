@@ -218,7 +218,12 @@
     if (method === 'POST' && pathname === '/api/watchlist') {
       const res = cloudEngine.addWatch(body);
       if (cloudEngine.getCloudSettings().github_pat) {
-        cloudEngine.syncWatchlistToGithub().catch((err) => toast(`GitHub sync: ${err.message}`, 'warn'));
+        try {
+          await cloudEngine.syncWatchlistToGithub();
+          res.syncedToCloud = true;
+        } catch (err) {
+          toast(`GitHub sync gagal: ${err.message}`, 'warn');
+        }
       }
       return res;
     }
@@ -226,7 +231,9 @@
       const items = Array.isArray(body) ? body : body.items;
       const res = cloudEngine.importWatchlist(items);
       if (cloudEngine.getCloudSettings().github_pat) {
-        cloudEngine.syncWatchlistToGithub().catch(() => {});
+        await cloudEngine
+          .syncWatchlistToGithub()
+          .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
       }
       return { ok: true, ...res };
     }
@@ -234,7 +241,9 @@
     if (method === 'DELETE' && wlSlugMatch) {
       const removed = cloudEngine.removeWatchBySlug(wlSlugMatch[1]);
       if (cloudEngine.getCloudSettings().github_pat) {
-        cloudEngine.syncWatchlistToGithub().catch(() => {});
+        await cloudEngine
+          .syncWatchlistToGithub()
+          .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
       }
       return { ok: true, removed };
     }
@@ -247,7 +256,9 @@
       if (method === 'DELETE') {
         cloudEngine.removeWatch(wlIdMatch[1]);
         if (cloudEngine.getCloudSettings().github_pat) {
-          cloudEngine.syncWatchlistToGithub().catch(() => {});
+          await cloudEngine
+            .syncWatchlistToGithub()
+            .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
         }
         return { ok: true };
       }
@@ -296,7 +307,10 @@
       if (body.channel === 'telegram') {
         return cloudEngine.sendTelegramBrowserTest(body.telegram_bot_token, body.telegram_chat_id);
       }
-      throw new Error('Di Mode Cloud, uji coba langsung dari browser mendukung Telegram. Untuk Webhook/Discord, simpan URL ke GitHub Secrets.');
+      if (body.channel === 'webhook') {
+        return cloudEngine.sendWebhookBrowserTest(body.webhook_url);
+      }
+      throw new Error('Windows Toast hanya tersedia pada server lokal Windows.');
     }
     if (method === 'POST' && pathname === '/api/sources') {
       throw new Error('Di Mode Cloud, tambahkan variable EXTRA_SOURCES di GitHub Actions Settings → Variables.');
@@ -873,7 +887,7 @@
         <div class="list-card-actions">
           <button class="btn btn-ghost btn-xs" data-sync-source="${esc(s.username)}">🔄 Full Sync</button>
           ${
-            st.sources.length > 1
+            !state.isCloudMode && st.sources.length > 1
               ? `<button class="btn btn-danger-ghost btn-xs" data-del-source="${esc(s.username)}">🗑 Hapus</button>`
               : ''
           }
@@ -938,10 +952,23 @@
       const repoVal = cloud?.github_repo || 'alfarizigan/dailyuploads-radar';
       if ($('setCloudGhRepo')) $('setCloudGhRepo').value = repoVal;
       if ($('setCloudGhPat')) $('setCloudGhPat').value = cloud?.github_pat || '';
+      if ($('tgSettingsTitle')) {
+        $('tgSettingsTitle').textContent = '✈️ Tes Cepat & Deteksi Chat ID Bot Telegram';
+      }
+      if ($('tgSettingsDesc')) {
+        $('tgSettingsDesc').innerHTML =
+          '1. Tempel <b>Bot Token</b> dari <b>@BotFather</b> di bawah (tidak disimpan ke server/localStorage).<br />' +
+          '2. Kirim pesan <code>/start</code> ke bot kamu di Telegram, lalu klik <b>🔍 Deteksi Chat ID Otomatis</b>.<br />' +
+          '3. Klik <b>🧪 Test Kirim Telegram</b>, lalu salin Token &amp; Chat ID ke <b>🔐 GitHub Repository Secrets</b> di atas agar aktif 24/7!';
+      }
+      if ($('webhookSettingsDesc')) {
+        $('webhookSettingsDesc').innerHTML =
+          'Uji coba Discord / JSON Webhook langsung dari browser, lalu simpan URL sebagai secret <code>WEBHOOK_URL</code> di <b>GitHub Repository Secrets</b> untuk notifikasi 24/7.';
+      }
       updateCloudRepoLinksUI(repoVal);
       box.className = 'status-box ok mt-12';
       box.innerHTML =
-        '☁️ <b>Mode Cloud:</b> Bot &amp; Notifikasi dijalankan otomatis oleh <b>GitHub Actions</b> setiap ~15 menit menggunakan <code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code> di GitHub Secrets. Kamu bisa menguji Token &amp; Chat ID kamu menggunakan tombol <b>🧪 Test Kirim Telegram</b> di bawah!';
+        '☁️ <b>Mode Cloud 24/7:</b> Bot &amp; Notifikasi dijalankan otomatis oleh <b>GitHub Actions</b> setiap ~15 menit menggunakan <code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code> di GitHub Secrets (bukan dari penyimpanan browser).';
     } else if (telegram?.running) {
       box.className = 'status-box ok mt-12';
       box.textContent = `✅ Bot aktif & listening sebagai @${telegram.botUsername}`;
@@ -1022,17 +1049,24 @@
 
   /* ── Actions ──────────────────────────────────────────── */
 
+  function formatWatchAddedToast(label, res) {
+    if (!res?.created) return `"${label}" sudah ada di Watchlist.`;
+    if (!state.isCloudMode) return `⭐ Memantau update untuk ${label}!`;
+    if (res.syncedToCloud) return `☁️ Dipantau 24/7 di GitHub Cloud: ${label}!`;
+    return `⭐ Ditandai di browser! Untuk notif HP 24/7, kirim "/watch ${label}" ke Bot Telegram atau hubungkan GitHub di Pengaturan.`;
+  }
+
   async function toggleAppWatch(slug, appName, currentlyWatched) {
     try {
       if (currentlyWatched) {
         await api(`/api/watchlist/by-slug/${encodeURIComponent(slug)}`, { method: 'DELETE' });
         toast(`Berhenti memantau ${appName}`, 'info');
       } else {
-        await api('/api/watchlist', {
+        const res = await api('/api/watchlist', {
           method: 'POST',
           body: JSON.stringify({ watch_type: 'app', target_slug: slug, display_name: appName }),
         });
-        toast(`⭐ Memantau update untuk ${appName}!`, 'success');
+        toast(formatWatchAddedToast(appName, res), 'success');
       }
       await Promise.all([loadStats(), loadFiles()]);
       if (state.tab === 'watchlist') await loadWatchlist();
@@ -1218,7 +1252,7 @@
       state.lang = state.lang === 'id' ? 'en' : 'id';
       localStorage.setItem('du_lang', state.lang);
       applyLang();
-      if (state.lastSearch) renderCatalog(state.lastSearch);
+      refreshActiveTab().catch(() => {});
     });
 
     // Search input
@@ -1251,12 +1285,7 @@
             platform_filter: state.platform !== 'all' ? state.platform : '',
           }),
         });
-        toast(
-          res.created
-            ? `🔔 Memantau keyword "${state.q}"!`
-            : `Keyword "${state.q}" sudah ada di Watchlist.`,
-          'success'
-        );
+        toast(formatWatchAddedToast(state.q, res), 'success');
         await loadStats();
       } catch (err) {
         toast(err.message, 'error');
@@ -1573,7 +1602,7 @@
         });
         $('kwInput').value = '';
         $('kwNotes').value = '';
-        toast(res.created ? `🔔 Pantauan "${keyword}" ditambahkan!` : 'Aturan sudah ada.', 'success');
+        toast(formatWatchAddedToast(keyword, res), 'success');
         await Promise.all([loadWatchlist(), loadStats()]);
       } catch (err) {
         toast(err.message, 'error');
@@ -1673,6 +1702,33 @@
       }
     });
 
+    if ($('btnDetectTgChatId')) {
+      $('btnDetectTgChatId').addEventListener('click', async () => {
+        if (!cloudEngine) return;
+        const token = $('setTgToken').value.trim();
+        try {
+          $('btnDetectTgChatId').disabled = true;
+          const info = await cloudEngine.detectTelegramChatId(token);
+          if (info.chatIds.length > 0) {
+            $('setTgChatId').value = info.chatIds.join(', ');
+            toast(
+              `✅ @${info.botUsername} terhubung! Chat ID terdeteksi: ${info.chatIds.join(', ')}`,
+              'success'
+            );
+          } else {
+            toast(
+              `✅ Token valid (@${info.botUsername})! Kirim pesan /start ke @${info.botUsername} di Telegram lalu klik tombol ini lagi.`,
+              'warn'
+            );
+          }
+        } catch (err) {
+          toast(`Gagal deteksi Chat ID: ${err.message}`, 'error');
+        } finally {
+          $('btnDetectTgChatId').disabled = false;
+        }
+      });
+    }
+
     if ($('btnSaveCloudBridge')) {
       $('btnSaveCloudBridge').addEventListener('click', () => {
         if (!cloudEngine) return;
@@ -1759,6 +1815,11 @@
     if ($('runtimeModeBadge')) $('runtimeModeBadge').classList.remove('hidden');
     if ($('cloudSettingsCard')) $('cloudSettingsCard').classList.remove('hidden');
     if ($('localAutoSyncCard')) $('localAutoSyncCard').classList.add('hidden');
+    if ($('tgLongPollingRow')) $('tgLongPollingRow').classList.add('hidden');
+    if ($('localSettingsFooter')) $('localSettingsFooter').classList.add('hidden');
+    if ($('btnDetectTgChatId')) $('btnDetectTgChatId').classList.remove('hidden');
+    if ($('addSourceForm')) $('addSourceForm').classList.add('hidden');
+    if ($('cloudSourcesHint')) $('cloudSourcesHint').classList.remove('hidden');
     updateCloudRepoLinksUI(cloudEngine.getCloudSettings().github_repo);
 
     await cloudEngine.fetchRemoteState();

@@ -22,9 +22,12 @@
     return (
       String(name || '')
         .toLowerCase()
+        .replace(/['’`]/g, '')
         .replace(/\+/g, ' plus ')
+        .replace(/&/g, ' and ')
         .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '') || 'unknown-app'
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'unknown-app'
     );
   }
 
@@ -89,11 +92,15 @@
     return uploadedDaysAgo + extraDays;
   }
 
-  function extractWordTokens(str) {
+  function foldSearchText(str) {
     return String(str || '')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  function extractWordTokens(str) {
+    return foldSearchText(str).match(/[\p{L}\p{N}]+/gu) || [];
   }
 
   function createMemoryStorage() {
@@ -151,6 +158,13 @@
         sync_logs: [],
       };
       this.versionCountBySourceSlug = new Map();
+      this._ephemeralSecrets = {
+        telegram_bot_token: '',
+        telegram_chat_id: '',
+        webhook_url: '',
+      };
+      this._ghSyncChain = null;
+      this._ghSyncDirty = false;
     }
 
     /* ── Storage Helpers ──────────────────────────────────── */
@@ -210,39 +224,56 @@
 
     getCloudSettings() {
       const saved = this._readJson('du_cloud_settings_v1', {});
+      // Scrub any legacy persisted notification secrets from localStorage
+      if (saved.telegram_bot_token || saved.webhook_url) {
+        delete saved.telegram_bot_token;
+        delete saved.webhook_url;
+        this._writeJson('du_cloud_settings_v1', saved);
+      }
       return {
         github_repo: saved.github_repo || this.githubRepo || '',
         github_pat: saved.github_pat || '',
         sync_watchlist_to_github: Boolean(saved.sync_watchlist_to_github),
-        telegram_bot_token: saved.telegram_bot_token || '',
-        telegram_chat_id: saved.telegram_chat_id || '',
-        webhook_url: saved.webhook_url || '',
+        telegram_bot_token: this._ephemeralSecrets.telegram_bot_token || '',
+        telegram_chat_id: this._ephemeralSecrets.telegram_chat_id || saved.telegram_chat_id || '',
+        webhook_url: this._ephemeralSecrets.webhook_url || '',
       };
     }
 
     updateCloudSettings(patch = {}) {
-      const cur = this.getCloudSettings();
-      const next = {
-        ...cur,
-        ...(patch.github_repo !== undefined ? { github_repo: String(patch.github_repo).trim() } : {}),
-        ...(patch.github_pat !== undefined ? { github_pat: String(patch.github_pat).trim() } : {}),
-        ...(patch.sync_watchlist_to_github !== undefined
-          ? { sync_watchlist_to_github: Boolean(patch.sync_watchlist_to_github) }
-          : {}),
-        ...(patch.telegram_bot_token !== undefined
-          ? { telegram_bot_token: String(patch.telegram_bot_token).trim() }
-          : {}),
-        ...(patch.telegram_chat_id !== undefined
-          ? { telegram_chat_id: String(patch.telegram_chat_id).trim() }
-          : {}),
-        ...(patch.webhook_url !== undefined ? { webhook_url: String(patch.webhook_url).trim() } : {}),
-      };
-      if (next.github_repo) {
-        this.githubRepo = next.github_repo;
-        this.storage.setItem('du_cloud_github_repo', next.github_repo);
+      const saved = this._readJson('du_cloud_settings_v1', {});
+      if (patch.telegram_bot_token !== undefined) {
+        this._ephemeralSecrets.telegram_bot_token = String(patch.telegram_bot_token).trim();
       }
-      this._writeJson('du_cloud_settings_v1', next);
-      return next;
+      if (patch.telegram_chat_id !== undefined) {
+        this._ephemeralSecrets.telegram_chat_id = String(patch.telegram_chat_id).trim();
+      }
+      if (patch.webhook_url !== undefined) {
+        this._ephemeralSecrets.webhook_url = String(patch.webhook_url).trim();
+      }
+
+      const persisted = {
+        github_repo:
+          patch.github_repo !== undefined
+            ? String(patch.github_repo).trim()
+            : saved.github_repo || this.githubRepo || '',
+        github_pat:
+          patch.github_pat !== undefined ? String(patch.github_pat).trim() : saved.github_pat || '',
+        sync_watchlist_to_github:
+          patch.sync_watchlist_to_github !== undefined
+            ? Boolean(patch.sync_watchlist_to_github)
+            : Boolean(saved.sync_watchlist_to_github),
+        telegram_chat_id:
+          patch.telegram_chat_id !== undefined
+            ? String(patch.telegram_chat_id).trim()
+            : saved.telegram_chat_id || '',
+      };
+      if (persisted.github_repo) {
+        this.githubRepo = persisted.github_repo;
+        this.storage.setItem('du_cloud_github_repo', persisted.github_repo);
+      }
+      this._writeJson('du_cloud_settings_v1', persisted);
+      return this.getCloudSettings();
     }
 
     /* ── State Hydration & Remote Loading ─────────────────── */
@@ -331,6 +362,8 @@
         f._wordTokens = wordTokens;
         f._appLower = String(f.app_name || '').toLowerCase();
         f._rawLower = String(f.raw_filename || '').toLowerCase();
+        f._appFolded = foldSearchText(f.app_name);
+        f._rawFolded = foldSearchText(f.raw_filename);
         f._haystack = `${f._appLower} ${f._rawLower} ${tagsLower.join(' ')}`;
 
         const key = `${f.source_user}::${f.app_slug}`;
@@ -353,15 +386,53 @@
         };
       });
 
+      const incomingCloudWl = Array.isArray(stateObj.watchlist) ? stateObj.watchlist : [];
       this.versionCountBySourceSlug = vCounts;
       this.state = {
         exported_at: stateObj.exported_at || null,
         sources,
         files: hydratedFiles,
-        cloudWatchlist: Array.isArray(stateObj.watchlist) ? stateObj.watchlist : [],
+        cloudWatchlist: incomingCloudWl,
         cloudAlerts: Array.isArray(stateObj.alerts) ? stateObj.alerts : [],
         sync_logs: Array.isArray(stateObj.sync_logs) ? [...stateObj.sync_logs].reverse() : [],
       };
+
+      // Reconcile muted cloud keys & local rules that already landed in (or were deleted from) cloudWatchlist
+      const cloudKeySet = new Set(incomingCloudWl.map((w) => this._watchDedupKey(w)));
+      const muted = this.getMutedCloudKeys();
+      if (muted.size > 0) {
+        let changedMuted = false;
+        for (const k of [...muted]) {
+          if (!cloudKeySet.has(k)) {
+            muted.delete(k);
+            changedMuted = true;
+          }
+        }
+        if (changedMuted) this.saveMutedCloudKeys(muted);
+      }
+
+      const exportedMs = stateObj.exported_at ? Date.parse(stateObj.exported_at) : NaN;
+      const localList = this.getLocalWatchlist();
+      if (localList.length > 0) {
+        const prunedLocal = localList.filter((lw) => {
+          const k = this._watchDedupKey(lw);
+          if (cloudKeySet.has(k) && !muted.has(k)) {
+            return false; // Cloud state now owns this rule
+          }
+          if (
+            lw.scope === 'cloud' &&
+            lw.synced_at &&
+            Number.isFinite(exportedMs) &&
+            exportedMs > Date.parse(lw.synced_at) + 15000
+          ) {
+            return false; // Previously synced rule was deleted in Cloud (e.g. via Telegram /unwatch)
+          }
+          return true;
+        });
+        if (prunedLocal.length !== localList.length) {
+          this.saveLocalWatchlist(prunedLocal);
+        }
+      }
 
       this._evaluateBrowserWatchUpdates();
       return this.state;
@@ -526,7 +597,21 @@
 
     /* ── Filtering, Search, Grouping & Sorting ────────────── */
 
-    _filterFiles(params = {}, watchedSlugs = this.getWatchedSlugSet()) {
+    _matchesWatchRule(f, w) {
+      if (w.source_user && w.source_user !== f.source_user) return false;
+      if (w.platform_filter && w.platform_filter !== f.platform) return false;
+      if (w.watch_type === 'app') {
+        return Boolean(w.target_slug) && f.app_slug === w.target_slug;
+      }
+      const terms = String(w.keyword || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+      if (terms.length === 0) return false;
+      return terms.every((t) => f._haystack.includes(t));
+    }
+
+    _filterFiles(params = {}) {
       const source = params.source && params.source !== 'all' ? params.source : '';
       const platform = params.platform && params.platform !== 'all' ? params.platform : '';
       const ext =
@@ -556,10 +641,12 @@
           : NaN;
       const watchedOnly =
         params.watchedOnly === true || params.watchedOnly === 'true' || params.watchedOnly === '1';
+      const watchRules = watchedOnly ? this.getCombinedWatchRules() : null;
 
       const q = String(params.q || '').trim();
       const qLower = q.toLowerCase();
-      const qTokens = q ? (qLower.match(/[a-z0-9]+/g) || []) : [];
+      const qFolded = foldSearchText(q);
+      const qTokens = q ? extractWordTokens(q) : [];
       const requireSubstring = Boolean(q) && (qTokens.length === 0 || /[+#@]/.test(q));
 
       return this.state.files.filter((f) => {
@@ -577,7 +664,12 @@
         }
         if (Number.isFinite(minBytes) && minBytes >= 0 && f.size_bytes < minBytes) return false;
         if (Number.isFinite(maxBytes) && maxBytes >= 0 && f.size_bytes > maxBytes) return false;
-        if (watchedOnly && !watchedSlugs.has(f.app_slug)) return false;
+        if (
+          watchedOnly &&
+          (watchRules.length === 0 || !watchRules.some((w) => this._matchesWatchRule(f, w)))
+        ) {
+          return false;
+        }
 
         if (qTokens.length > 0) {
           const allMatch = qTokens.every((qt) =>
@@ -586,7 +678,9 @@
           if (!allMatch) return false;
         }
         if (requireSubstring) {
-          if (!f._appLower.includes(qLower) && !f._rawLower.includes(qLower)) return false;
+          const matchesRaw = f._appLower.includes(qLower) || f._rawLower.includes(qLower);
+          const matchesFolded = f._appFolded.includes(qFolded) || f._rawFolded.includes(qFolded);
+          if (!matchesRaw && !matchesFolded) return false;
         }
         return true;
       });
@@ -1132,6 +1226,27 @@
     /* ── Optional GitHub Cloud Sync & Telegram Test ───────── */
 
     async syncWatchlistToGithub() {
+      // Serialize & coalesce rapid watch/unwatch clicks so concurrent PUTs never hit GitHub HTTP 409 Conflict
+      this._ghSyncDirty = true;
+      if (this._ghSyncChain) {
+        return this._ghSyncChain;
+      }
+
+      this._ghSyncChain = (async () => {
+        let lastResult = { synced: false };
+        while (this._ghSyncDirty) {
+          this._ghSyncDirty = false;
+          lastResult = await this._pushWatchlistToGithubOnce();
+        }
+        return lastResult;
+      })().finally(() => {
+        this._ghSyncChain = null;
+      });
+
+      return this._ghSyncChain;
+    }
+
+    async _pushWatchlistToGithubOnce() {
       const cfg = this.getCloudSettings();
       if (!cfg.github_pat || !cfg.github_repo) return { synced: false };
 
@@ -1148,11 +1263,21 @@
         sha = existing.sha;
       }
 
-      const exported = this.exportWatchlistJson().content;
+      const syncedAt = new Date().toISOString();
+      const items = JSON.parse(this.exportWatchlistJson().content);
+      const payloadJson = JSON.stringify(
+        {
+          authoritative: true,
+          updated_at: syncedAt,
+          items,
+        },
+        null,
+        2
+      );
       const b64 =
         typeof btoa === 'function'
-          ? btoa(unescape(encodeURIComponent(exported)))
-          : Buffer.from(exported, 'utf8').toString('base64');
+          ? btoa(unescape(encodeURIComponent(payloadJson)))
+          : Buffer.from(payloadJson, 'utf8').toString('base64');
 
       const putRes = await this.fetchFn(apiUrl, {
         method: 'PUT',
@@ -1169,8 +1294,12 @@
         throw new Error(errData.message || `GitHub API HTTP ${putRes.status}`);
       }
 
-      // Mark local rules as synced to cloud
-      const local = this.getLocalWatchlist().map((w) => ({ ...w, scope: 'cloud' }));
+      // Mark local rules as synced to cloud with timestamp for later reconciliation
+      const local = this.getLocalWatchlist().map((w) => ({
+        ...w,
+        scope: 'cloud',
+        synced_at: syncedAt,
+      }));
       this.saveLocalWatchlist(local);
       return { synced: true };
     }
@@ -1197,6 +1326,52 @@
         throw new Error(errData.message || `GitHub Actions HTTP ${res.status}`);
       }
       return { dispatched: true };
+    }
+
+    async detectTelegramChatId(token) {
+      const cleanToken = String(token || '').trim();
+      if (!cleanToken) {
+        throw new Error('Tempelkan Telegram Bot Token dari @BotFather terlebih dahulu.');
+      }
+
+      const meRes = await this.fetchFn(
+        `https://api.telegram.org/bot${encodeURIComponent(cleanToken)}/getMe`
+      );
+      const meData = await meRes.json().catch(() => ({}));
+      if (!meRes.ok || meData.ok === false) {
+        throw new Error(meData.description || `Token Bot tidak valid (HTTP ${meRes.status})`);
+      }
+      const botUsername = meData.result?.username || 'bot';
+
+      // Call getUpdates WITHOUT offset so pending commands on Telegram's queue are NOT consumed
+      const updRes = await this.fetchFn(
+        `https://api.telegram.org/bot${encodeURIComponent(cleanToken)}/getUpdates?limit=20&timeout=0`
+      );
+      const updData = await updRes.json().catch(() => ({}));
+      if (!updRes.ok || updData.ok === false) {
+        throw new Error(updData.description || `Gagal membaca getUpdates (HTTP ${updRes.status})`);
+      }
+
+      const seenChats = new Map();
+      const updates = Array.isArray(updData.result) ? updData.result : [];
+      for (const u of updates) {
+        const chat = u.message?.chat || u.callback_query?.message?.chat;
+        if (chat?.id !== undefined) {
+          seenChats.set(String(chat.id), chat.title || chat.first_name || chat.username || String(chat.id));
+        }
+      }
+
+      const chatIds = [...seenChats.keys()];
+      if (chatIds.length > 0) {
+        this.updateCloudSettings({ telegram_chat_id: chatIds.join(', ') });
+      }
+
+      return {
+        ok: true,
+        botUsername,
+        chatIds,
+        chats: [...seenChats.entries()].map(([id, label]) => ({ id, label })),
+      };
     }
 
     async sendTelegramBrowserTest(token, chatId) {
@@ -1232,6 +1407,44 @@
       }
       return { ok: true, channel: 'telegram' };
     }
+
+    async sendWebhookBrowserTest(webhookUrl) {
+      const cleanUrl = String(webhookUrl || '').trim();
+      if (!cleanUrl) {
+        throw new Error('Isi Webhook URL terlebih dahulu.');
+      }
+      const isDiscord = /discord(?:app)?\.com\/api\/webhooks\//i.test(cleanUrl);
+      const payload = isDiscord
+        ? {
+            username: 'DailyUploads Radar',
+            content: '🔔 **DailyUploads Radar Cloud — Test Webhook Berhasil!**',
+            embeds: [
+              {
+                title: 'Spotify-Shrubify (v9.2.1 → v9.2.2)',
+                url: 'https://dailyuploads.net/users/user_hidden',
+                color: 0x3b82f6,
+                description:
+                  'Simpan URL Webhook ini sebagai `WEBHOOK_URL` di **GitHub Repository Secrets** untuk notifikasi otomatis 24/7!',
+              },
+            ],
+          }
+        : {
+            event: 'dailyuploads.test',
+            timestamp: new Date().toISOString(),
+            message: 'DailyUploads Radar Cloud Webhook Test OK',
+          };
+
+      const res = await this.fetchFn(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Webhook HTTP ${res.status}: ${txt.slice(0, 140)}`);
+      }
+      return { ok: true, channel: 'webhook' };
+    }
   }
 
   return {
@@ -1241,5 +1454,6 @@
     computeEffectiveAge,
     csvCell,
     detectGithubRepoFromLocation,
+    slugifyAppName,
   };
 });

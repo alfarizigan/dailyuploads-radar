@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
@@ -13,12 +14,30 @@ function nowIso() {
 const EFFECTIVE_AGE_SQL =
   "CASE WHEN f.uploaded_days_ago IS NULL THEN NULL ELSE f.uploaded_days_ago + MAX(0, CAST(julianday('now') - julianday(f.last_seen_at) AS INTEGER)) END";
 
+function foldDiacritics(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 function buildFtsMatchQuery(rawQuery) {
-  const tokens = String(rawQuery || '')
+  const tokens = foldDiacritics(rawQuery)
     .trim()
-    .match(/[a-zA-Z0-9]+/g);
+    .match(/[\p{L}\p{N}]+/gu);
   if (!tokens || tokens.length === 0) return '';
   return tokens.map((t) => `"${t}"*`).join(' ');
+}
+
+function getWatchDedupKey(w) {
+  const type = w?.watch_type === 'keyword' ? 'keyword' : 'app';
+  const target =
+    type === 'keyword'
+      ? String(w?.keyword || '')
+          .trim()
+          .toLowerCase()
+      : String(w?.target_slug || slugifyAppName(w?.display_name || '')).trim();
+  const plat = String(w?.platform_filter || '').trim();
+  return `${type}::${target}::${plat}`;
 }
 
 class RadarDB {
@@ -214,6 +233,36 @@ class RadarDB {
     this.db
       .prepare(
         `INSERT INTO settings (key, value) VALUES ('telegram_update_offset', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+      .run(JSON.stringify(safe));
+    return safe;
+  }
+
+  getWatchlistFileMeta() {
+    const row = this.db
+      .prepare("SELECT value FROM settings WHERE key = 'watchlist_file_meta'")
+      .get();
+    if (!row) return { hash: '', keys: [] };
+    try {
+      const parsed = JSON.parse(row.value);
+      return {
+        hash: typeof parsed?.hash === 'string' ? parsed.hash : '',
+        keys: Array.isArray(parsed?.keys) ? parsed.keys.map(String) : [],
+      };
+    } catch {
+      return { hash: '', keys: [] };
+    }
+  }
+
+  setWatchlistFileMeta(meta = {}) {
+    const safe = {
+      hash: typeof meta.hash === 'string' ? meta.hash : '',
+      keys: Array.isArray(meta.keys) ? meta.keys.map(String) : [],
+    };
+    this.db
+      .prepare(
+        `INSERT INTO settings (key, value) VALUES ('watchlist_file_meta', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
       )
       .run(JSON.stringify(safe));
@@ -566,7 +615,43 @@ class RadarDB {
     }
 
     if (params.watchedOnly === true || params.watchedOnly === 'true' || params.watchedOnly === '1') {
-      where.push("f.app_slug IN (SELECT target_slug FROM watchlist WHERE watch_type = 'app')");
+      const watches = this.db
+        .prepare('SELECT watch_type, target_slug, keyword, platform_filter, source_user FROM watchlist')
+        .all();
+      const ruleClauses = [];
+      for (const w of watches) {
+        const conds = [];
+        if (w.source_user) {
+          conds.push('f.source_user = ?');
+          bindings.push(w.source_user);
+        }
+        if (w.platform_filter) {
+          conds.push('f.platform = ?');
+          bindings.push(w.platform_filter);
+        }
+        if (w.watch_type === 'app' && w.target_slug) {
+          conds.push('f.app_slug = ?');
+          bindings.push(w.target_slug);
+          ruleClauses.push(`(${conds.join(' AND ')})`);
+        } else if (w.watch_type === 'keyword' && w.keyword) {
+          const terms = String(w.keyword)
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean);
+          if (terms.length > 0) {
+            for (const t of terms) {
+              conds.push("LOWER(f.app_name || ' ' || f.raw_filename || ' ' || f.tags_text) LIKE ? ESCAPE '\\'");
+              bindings.push(`%${t.replace(/[\\%_]/g, '\\$&')}%`);
+            }
+            ruleClauses.push(`(${conds.join(' AND ')})`);
+          }
+        }
+      }
+      if (ruleClauses.length === 0) {
+        where.push('0 = 1');
+      } else {
+        where.push(`(${ruleClauses.join(' OR ')})`);
+      }
     }
 
     const q = String(params.q || '').trim();
@@ -1038,6 +1123,77 @@ class RadarDB {
     return { added, skipped };
   }
 
+  /**
+   * Reconciles declarative `watchlist.json` changes without resurrecting rules
+   * that were deleted via Telegram (`/unwatch`) and while honoring deletions
+   * made in `watchlist.json` or authoritative Cloud Web UI pushes.
+   */
+  reconcileWatchlistFile(rawContent) {
+    const trimmed = String(rawContent || '').trim();
+    const hash = crypto.createHash('sha256').update(trimmed).digest('hex');
+    const prevMeta = this.getWatchlistFileMeta();
+
+    if (prevMeta.hash === hash) {
+      return { added: 0, removed: 0, changed: false };
+    }
+
+    let parsed = [];
+    if (trimmed) {
+      parsed = JSON.parse(trimmed);
+    }
+    const isAuthoritative = Boolean(
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.authoritative === true
+    );
+    const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : [];
+
+    const currMap = new Map();
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object') continue;
+      const normalized = {
+        watch_type: raw.watch_type === 'keyword' ? 'keyword' : 'app',
+        target_slug: raw.target_slug || '',
+        keyword: raw.keyword || '',
+        display_name: raw.display_name || '',
+        platform_filter: raw.platform_filter || '',
+        source_user: raw.source_user || '',
+        notes: raw.notes || '',
+      };
+      const key = getWatchDedupKey(normalized);
+      if (key.endsWith('::::')) continue;
+      currMap.set(key, normalized);
+    }
+
+    const prevKeys = new Set(prevMeta.keys || []);
+    const dbWatches = this.db.prepare('SELECT * FROM watchlist').all();
+    const dbKeySet = new Set(dbWatches.map((w) => getWatchDedupKey(w)));
+
+    let added = 0;
+    let removed = 0;
+
+    for (const [key, item] of currMap.entries()) {
+      const shouldAdd = isAuthoritative ? !dbKeySet.has(key) : !prevKeys.has(key) && !dbKeySet.has(key);
+      if (shouldAdd) {
+        try {
+          const res = this.addWatch(item);
+          if (res.created) added += 1;
+        } catch {
+          // skip invalid entry
+        }
+      }
+    }
+
+    for (const w of dbWatches) {
+      const key = getWatchDedupKey(w);
+      const shouldRemove = isAuthoritative ? !currMap.has(key) : prevKeys.has(key) && !currMap.has(key);
+      if (shouldRemove) {
+        if (this.removeWatch(w.id)) removed += 1;
+      }
+    }
+
+    this.setWatchlistFileMeta({ hash, keys: [...currMap.keys()] });
+    return { added, removed, changed: added > 0 || removed > 0 };
+  }
+
   /* ── Update Matching & Alerts ─────────────────────────── */
 
   matchWatchlistForNewFiles(newFiles) {
@@ -1237,6 +1393,7 @@ class RadarDB {
       schema_version: 1,
       exported_at: nowIso(),
       bot_offset: this.getBotOffset(),
+      watchlist_file_meta: this.getWatchlistFileMeta(),
       columns: [
         'file_code',
         'source_user',
@@ -1502,6 +1659,11 @@ class RadarDB {
       if (stateObj.bot_offset !== undefined) {
         this.setBotOffset(stateObj.bot_offset);
       }
+      if (stateObj.watchlist_file_meta !== undefined) {
+        this.setWatchlistFileMeta(stateObj.watchlist_file_meta);
+      } else {
+        this.setWatchlistFileMeta({ hash: '', keys: [] });
+      }
 
       this.db.exec('COMMIT');
     } catch (err) {
@@ -1511,4 +1673,4 @@ class RadarDB {
   }
 }
 
-module.exports = { RadarDB, buildFtsMatchQuery };
+module.exports = { RadarDB, buildFtsMatchQuery, getWatchDedupKey };

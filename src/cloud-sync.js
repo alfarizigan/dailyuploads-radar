@@ -89,19 +89,12 @@ async function runCloudSync(options = {}) {
       }
     }
 
-    // Merge declarative watchlist.json if present
-    let importedFromFile = 0;
+    // Reconcile declarative watchlist.json if present (honors additions & removals without resurrecting Telegram unwatches)
+    let wlReconcile = { added: 0, removed: 0, changed: false };
     if (watchlistFile && fs.existsSync(watchlistFile)) {
       try {
-        const rawWl = fs.readFileSync(watchlistFile, 'utf8').trim();
-        if (rawWl) {
-          const parsedWl = JSON.parse(rawWl);
-          const list = Array.isArray(parsedWl) ? parsedWl : parsedWl.items;
-          if (Array.isArray(list) && list.length > 0) {
-            const imp = db.importWatchlist(list);
-            importedFromFile = imp.added;
-          }
-        }
+        const rawWl = fs.readFileSync(watchlistFile, 'utf8');
+        wlReconcile = db.reconcileWatchlistFile(rawWl);
       } catch (err) {
         console.warn(`[CloudSync] Warning reading ${watchlistFile}: ${err.message}`);
       }
@@ -113,7 +106,7 @@ async function runCloudSync(options = {}) {
     const telegramBot = new TelegramBotRunner({ db, syncManager, fetchFn });
 
     // 1. Drain pending Telegram commands BEFORE syncing DailyUploads so newly added /watch rules apply immediately
-    let tgPre = { enabled: false, processed: 0 };
+    let tgPre = { enabled: false, processed: 0, manualSyncResults: null };
     try {
       tgPre = await telegramBot.processPendingUpdates({
         registerCommands: !hadPreviousState,
@@ -122,12 +115,24 @@ async function runCloudSync(options = {}) {
       console.error(`[CloudSync] Telegram pre-sync queue error: ${err.message}`);
     }
 
-    // 2. Sync all enabled DailyUploads sources & send alerts (Telegram + Webhook)
-    const syncResults = await syncManager.syncAllSources({ mode: syncMode });
+    // 2. Sync all enabled DailyUploads sources & send alerts (reuse if /sync in Telegram just ran quick sync and full wasn't requested)
+    const syncResults =
+      Array.isArray(tgPre.manualSyncResults) && tgPre.manualSyncResults.length > 0 && syncMode !== 'full'
+        ? tgPre.manualSyncResults
+        : await syncManager.syncAllSources({ mode: syncMode });
     const okResults = syncResults.filter((r) => r.ok);
     const failedResults = syncResults.filter((r) => !r.ok);
 
     if (syncResults.length > 0 && okResults.length === 0) {
+      // Preserve pre-sync Telegram bot_offset & watchlist changes so acknowledged updates are never lost or re-spammed
+      if (statePath && (tgPre.processed > 0 || wlReconcile.changed)) {
+        writeFileAtomic(statePath, JSON.stringify(db.exportCloudState()));
+        appendGithubOutput({
+          state_changed: 'false',
+          preserve_user_state: 'true',
+          pages_needs_deploy: 'false',
+        });
+      }
       const reasons = failedResults.map((f) => `${f.sourceUser}: ${f.error}`).join('; ');
       throw new Error(`All DailyUploads sources failed to sync (${reasons})`);
     }
@@ -152,7 +157,7 @@ async function runCloudSync(options = {}) {
     const nextState = db.exportCloudState();
     const stats = db.getStats();
     const watchlistChanged =
-      importedFromFile > 0 ||
+      wlReconcile.changed ||
       tgProcessed > 0 ||
       nextState.watchlist.length !== prevWatchCount;
 

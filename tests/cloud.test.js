@@ -349,3 +349,283 @@ test('CloudRadarEngine static client matches RadarDB search, filters, stale age,
     db.close();
   }
 });
+
+test('Unicode diacritics, watchedOnly keyword filter, and slugifyAppName parity across RadarDB & CloudRadarEngine', () => {
+  const { slugifyAppName: cloudSlugify } = require('../public/cloud-engine');
+  const { slugifyAppName: serverSlugify } = require('../src/parser');
+
+  assert.equal(
+    cloudSlugify('Weather & Radar Premium'),
+    serverSlugify('Weather & Radar Premium')
+  );
+  assert.equal(cloudSlugify("Assassin's Creed"), serverSlugify("Assassin's Creed"));
+
+  const db = new RadarDB(':memory:');
+  try {
+    const sample = [
+      makeFile('u1', 'Désiré_(v1.0.42_Univ_FW_os140_ok27)-user_hidden.bfi2.ipa', { days: 0 }),
+      makeFile('u2', 'Spotify-Shrubify_(v9.2.2_Univ_64bit_os161)-user_hidden.bfi2.ipa', { days: 1 }),
+      makeFile('u3', 'Spotify_1.2.0_[TNT].dmg', { days: 2 }),
+    ];
+    db.saveSyncResult('user_hidden', sample, { mode: 'full', totalReported: 3 });
+    db.addWatch({ watch_type: 'keyword', keyword: 'Spotify', platform_filter: 'iOS' });
+
+    const engine = new CloudRadarEngine();
+    engine.loadStateObject(db.exportCloudState());
+
+    // Both accented "Désiré" and unaccented "Desire" must find the app in both engines
+    assert.equal(db.searchFiles({ q: 'Désiré' }).total, 1);
+    assert.equal(db.searchFiles({ q: 'Desire' }).total, 1);
+    assert.equal(engine.searchFiles({ q: 'Désiré' }).total, 1);
+    assert.equal(engine.searchFiles({ q: 'Desire' }).total, 1);
+
+    // watchedOnly must match keyword watches AND respect platform_filter ('iOS' -> excludes macOS dmg)
+    const dbWatched = db.searchFiles({ watchedOnly: true, grouped: false });
+    const cloudWatched = engine.searchFiles({ watchedOnly: true, grouped: false });
+    assert.equal(dbWatched.total, 1);
+    assert.equal(dbWatched.items[0].file_code, 'u2');
+    assert.equal(cloudWatched.total, 1);
+    assert.equal(cloudWatched.items[0].file_code, 'u2');
+  } finally {
+    db.close();
+  }
+});
+
+test('Bidirectional watchlist.json reconciliation avoids zombie resurrection, honors removals, and preserves pre-sync Telegram watches on scrape failure', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-reconcile-'));
+  const statePath = path.join(tmpDir, 'cloud-state.json');
+  const watchlistPath = path.join(tmpDir, 'watchlist.json');
+
+  const prevEnv = {
+    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+    CLOUD_MODE: process.env.CLOUD_MODE,
+  };
+  process.env.TELEGRAM_BOT_TOKEN = '888:RECONTOK';
+  process.env.TELEGRAM_CHAT_ID = '555';
+  process.env.CLOUD_MODE = '1';
+
+  try {
+    const items = [makeFile('r1', 'Spotify-Shrubify_(v9.2.1_Univ_64bit_os161)-user_hidden.bfi2.ipa', { days: 1 })];
+    const okScraper = {
+      fetchAllFiles: async () => ({ items, totalReported: 1, pagesFetched: 1 }),
+      fetchRecentFiles: async () => ({ items, totalReported: 1, pagesFetched: 1 }),
+    };
+
+    let tgQueue = [];
+    const sentMessages = [];
+    const editedMarkups = [];
+    const mockFetch = async (url, opts) => {
+      const method = url.split('/').pop();
+      const body = JSON.parse(opts.body);
+      if (method === 'getUpdates') {
+        const batch = tgQueue.filter((u) => u.update_id >= (body.offset || 0));
+        tgQueue = [];
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: batch }) };
+      }
+      if (method === 'answerCallbackQuery') {
+        // Simulate expired callback_query (>30s delay in GitHub Actions cron)
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ ok: false, description: 'Bad Request: query is too old and response timeout expired' }),
+        };
+      }
+      if (method === 'editMessageReplyMarkup') {
+        editedMarkups.push(body);
+      }
+      if (method === 'sendMessage') {
+        sentMessages.push(body);
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: true }) };
+    };
+
+    // 1. Seed two rules via watchlist.json
+    fs.writeFileSync(
+      watchlistPath,
+      JSON.stringify([
+        { watch_type: 'keyword', keyword: 'Procreate', platform_filter: 'iOS' },
+        { watch_type: 'keyword', keyword: 'LumaFusion', platform_filter: 'iOS' },
+      ]),
+      'utf8'
+    );
+    const r1 = await runCloudSync({
+      statePath,
+      watchlistFile: watchlistPath,
+      scraper: okScraper,
+      fetchFn: mockFetch,
+      skipPostDelay: true,
+    });
+    assert.equal(r1.watchlistCount, 2);
+
+    // 2. Delete Procreate via delayed Telegram inline callback (unwatch_id:1) while watchlist.json still lists Procreate
+    tgQueue = [
+      {
+        update_id: 200,
+        callback_query: {
+          id: 'expired_cb',
+          data: 'unwatch_id:1',
+          message: {
+            message_id: 77,
+            chat: { id: 555 },
+            reply_markup: {
+              inline_keyboard: [[{ text: '🗑 Hapus: Procreate', callback_data: 'unwatch_id:1' }]],
+            },
+          },
+        },
+      },
+    ];
+    const r2 = await runCloudSync({
+      statePath,
+      watchlistFile: watchlistPath,
+      mode: 'quick',
+      scraper: okScraper,
+      fetchFn: mockFetch,
+      skipPostDelay: true,
+    });
+    assert.equal(r2.watchlistCount, 1, 'Procreate must be deleted via Telegram');
+    assert.equal(editedMarkups.length, 1, 'Inline keyboard row should be updated');
+    assert.ok(
+      sentMessages.some((m) => m.text.includes('Procreate') && m.text.includes('dihapus')),
+      'Expired callback_query in cron mode must send chat confirmation message'
+    );
+
+    // 3. Next cron run with unchanged watchlist.json MUST NOT resurrect Procreate!
+    const r3 = await runCloudSync({
+      statePath,
+      watchlistFile: watchlistPath,
+      mode: 'quick',
+      scraper: okScraper,
+      fetchFn: mockFetch,
+      skipPostDelay: true,
+    });
+    assert.equal(r3.watchlistCount, 1, 'Deleted rule must NOT resurrect on subsequent cron runs');
+
+    // 4. Editing watchlist.json to remove LumaFusion removes it from cloud state
+    fs.writeFileSync(watchlistPath, JSON.stringify([]), 'utf8');
+    const r4 = await runCloudSync({
+      statePath,
+      watchlistFile: watchlistPath,
+      mode: 'quick',
+      scraper: okScraper,
+      fetchFn: mockFetch,
+      skipPostDelay: true,
+    });
+    assert.equal(r4.watchlistCount, 0, 'Removing rule from watchlist.json must remove it from cloud state');
+
+    // 5. User queues /watch Shadowrocket on Telegram, then DailyUploads fails with HTTP 503:
+    //    catalog stays intact AND Shadowrocket + bot_offset are preserved!
+    tgQueue = [{ update_id: 201, message: { chat: { id: 555 }, text: '/watch Shadowrocket' } }];
+    const failingScraper = {
+      fetchAllFiles: async () => {
+        throw new Error('HTTP 503');
+      },
+      fetchRecentFiles: async () => {
+        throw new Error('HTTP 503');
+      },
+    };
+    await assert.rejects(
+      () =>
+        runCloudSync({
+          statePath,
+          watchlistFile: watchlistPath,
+          mode: 'quick',
+          scraper: failingScraper,
+          fetchFn: mockFetch,
+          skipPostDelay: true,
+        }),
+      /All DailyUploads sources failed/
+    );
+    const savedOnFail = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(savedOnFail.files.length, 1, 'Catalog files must stay intact on scrape error');
+    assert.equal(savedOnFail.bot_offset, 202, 'Bot offset must be preserved so user is not re-spammed');
+    assert.equal(savedOnFail.watchlist.length, 1, 'Pre-sync /watch must not be lost when scrape fails');
+    assert.equal(savedOnFail.watchlist[0].keyword, 'Shadowrocket');
+  } finally {
+    for (const [k, v] of Object.entries(prevEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CloudRadarEngine never persists secrets to storage, coalesces concurrent GitHub pushes, and detects Telegram Chat ID', async () => {
+  const storageMap = new Map();
+  const storage = {
+    getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+    setItem: (k, v) => storageMap.set(k, String(v)),
+    removeItem: (k) => storageMap.delete(k),
+  };
+
+  let putCalls = 0;
+  let currentSha = 'sha_v1';
+  let lastPutContent = null;
+
+  const mockFetch = async (url, opts = {}) => {
+    if (url.includes('/contents/watchlist.json')) {
+      if (!opts.method || opts.method === 'GET') {
+        await new Promise((r) => setTimeout(r, 15));
+        return { ok: true, status: 200, json: async () => ({ sha: currentSha }) };
+      }
+      if (opts.method === 'PUT') {
+        const body = JSON.parse(opts.body);
+        if (body.sha !== currentSha) {
+          return { ok: false, status: 409, json: async () => ({ message: '409 SHA conflict' }) };
+        }
+        putCalls += 1;
+        currentSha = `sha_v${putCalls + 1}`;
+        lastPutContent = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8'));
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+    }
+    if (url.endsWith('/getMe')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: { username: 'MyRadarBot' } }) };
+    }
+    if (url.includes('/getUpdates?')) {
+      assert.ok(!url.includes('offset='), 'Chat ID detector must not consume Telegram queue offset');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          result: [{ update_id: 1, message: { chat: { id: 987654321, first_name: 'Alfa' }, text: '/start' } }],
+        }),
+      };
+    }
+    if (url.includes('discord.com/api/webhooks/')) {
+      const body = JSON.parse(opts.body);
+      assert.ok(Array.isArray(body.embeds));
+      return { ok: true, status: 204, text: async () => '' };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const engine = new CloudRadarEngine({ storage, fetchFn: mockFetch, githubRepo: 'alfarizigan/dailyuploads-radar' });
+
+  // 1. Secret non-persistence in localStorage
+  engine.updateCloudSettings({
+    github_pat: 'ghp_testpat',
+    telegram_bot_token: '111:SECRET_BOT_TOK',
+    webhook_url: 'https://discord.com/api/webhooks/1/secret',
+  });
+  const rawStored = storageMap.get('du_cloud_settings_v1');
+  assert.ok(!rawStored.includes('SECRET_BOT_TOK'), 'Telegram bot token must never be persisted to localStorage');
+  assert.ok(!rawStored.includes('webhooks/1/secret'), 'Webhook URL must never be persisted to localStorage');
+
+  // 2. Concurrent rapid syncWatchlistToGithub calls coalesce cleanly without 409 conflict
+  engine.addWatch({ watch_type: 'keyword', keyword: 'AppOne' });
+  const p1 = engine.syncWatchlistToGithub();
+  engine.addWatch({ watch_type: 'keyword', keyword: 'AppTwo' });
+  const p2 = engine.syncWatchlistToGithub();
+  await Promise.all([p1, p2]);
+  assert.equal(lastPutContent.authoritative, true);
+  assert.equal(lastPutContent.items.length, 2);
+
+  // 3. Auto-detect Telegram Chat ID + Discord Webhook test
+  const detected = await engine.detectTelegramChatId('111:SECRET_BOT_TOK');
+  assert.equal(detected.botUsername, 'MyRadarBot');
+  assert.deepEqual(detected.chatIds, ['987654321']);
+  const whRes = await engine.sendWebhookBrowserTest('https://discord.com/api/webhooks/1/secret');
+  assert.equal(whRes.ok, true);
+});

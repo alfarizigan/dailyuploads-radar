@@ -25,6 +25,7 @@ class TelegramBotRunner {
     this.abortController = null;
     this.botInfo = null;
     this.lastError = '';
+    this.manualSyncResults = null;
   }
 
   getStatus() {
@@ -86,10 +87,11 @@ class TelegramBotRunner {
    * Drains pending Telegram updates using persisted bot_offset without hanging.
    */
   async processPendingUpdates({ tokenOverride = '', maxBatches = 10, registerCommands = false } = {}) {
+    this.manualSyncResults = null;
     const settings = this.db.getSettings();
     const token = String(tokenOverride || settings.telegram_bot_token || '').trim();
     if (!token) {
-      return { enabled: false, processed: 0, offset: this.offset };
+      return { enabled: false, processed: 0, offset: this.offset, manualSyncResults: null };
     }
 
     if (registerCommands) {
@@ -101,6 +103,7 @@ class TelegramBotRunner {
     }
 
     let processed = 0;
+    let sawUpdates = false;
     for (let batch = 0; batch < maxBatches; batch += 1) {
       const updates = await this.apiCall(token, 'getUpdates', {
         offset: this.offset,
@@ -108,7 +111,11 @@ class TelegramBotRunner {
         timeout: 0,
         allowed_updates: ['message', 'callback_query'],
       });
-      if (!Array.isArray(updates) || updates.length === 0) break;
+      if (!Array.isArray(updates) || updates.length === 0) {
+        sawUpdates = false;
+        break;
+      }
+      sawUpdates = true;
 
       for (const upd of updates) {
         this.offset = upd.update_id + 1;
@@ -126,7 +133,40 @@ class TelegramBotRunner {
       if (updates.length < 100) break;
     }
 
-    return { enabled: true, processed, offset: this.offset };
+    // Acknowledge the final offset on Telegram's server queue so processed updates are committed upstream
+    if (sawUpdates && this.offset > 0) {
+      try {
+        const tail = await this.apiCall(token, 'getUpdates', {
+          offset: this.offset,
+          limit: 10,
+          timeout: 0,
+          allowed_updates: ['message', 'callback_query'],
+        });
+        if (Array.isArray(tail) && tail.length > 0) {
+          for (const upd of tail) {
+            this.offset = upd.update_id + 1;
+            if (typeof this.db.setBotOffset === 'function') {
+              this.db.setBotOffset(this.offset);
+            }
+            try {
+              await this.handleUpdate(token, upd);
+              processed += 1;
+            } catch (err) {
+              console.error('[Telegram] Tail handler error:', err.message);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal; persisted db offset still prevents re-processing
+      }
+    }
+
+    return {
+      enabled: true,
+      processed,
+      offset: this.offset,
+      manualSyncResults: this.manualSyncResults,
+    };
   }
 
   stop() {
@@ -323,8 +363,13 @@ class TelegramBotRunner {
     }
 
     if (/^\/sync(?:@\S+)?(?:\s|$)/i.test(text)) {
+      if (!this.syncManager) {
+        await this.sendReply(token, chatId, 'ℹ️ Engine sinkronisasi belum tersedia.');
+        return;
+      }
       await this.sendReply(token, chatId, '🔄 Memulai quick sync dari DailyUploads...');
       const results = await this.syncManager.syncAllSources({ mode: 'quick' });
+      this.manualSyncResults = results;
       const lines = ['✅ <b>Sync Selesai</b>'];
       for (const r of results) {
         if (r.ok) {
@@ -402,6 +447,10 @@ class TelegramBotRunner {
     }
     const data = String(cb.data || '');
     let toast = 'OK';
+    let replyHtml = '';
+    let buttonReplacement = null;
+    let removeRowByCallback = false;
+
     if (data.startsWith('watch_fc:')) {
       const code = data.slice('watch_fc:'.length);
       const file = this.db.getFileByCode(code);
@@ -412,33 +461,83 @@ class TelegramBotRunner {
           display_name: file.app_name,
         });
         toast = `🔔 Memantau ${item.display_name}`;
+        replyHtml = `🔔 Berhasil memantau aplikasi <b>${escapeTelegramHtml(item.display_name)}</b>!`;
+        buttonReplacement = {
+          text: `🔕 Unwatch ${item.display_name.slice(0, 22)}`,
+          callback_data: `unwatch_fc:${code}`,
+        };
       } else {
         toast = '❌ File tidak ditemukan di katalog';
+        replyHtml = '❌ File tidak ditemukan di katalog.';
       }
     } else if (data.startsWith('unwatch_fc:')) {
       const code = data.slice('unwatch_fc:'.length);
       const file = this.db.getFileByCode(code);
-      if (file) this.db.removeWatchBySlug(file.app_slug);
+      if (file) {
+        this.db.removeWatchBySlug(file.app_slug);
+        replyHtml = `🔕 Berhenti memantau <b>${escapeTelegramHtml(file.app_name)}</b>.`;
+        buttonReplacement = {
+          text: `🔔 Watch ${file.app_name.slice(0, 22)}`,
+          callback_data: `watch_fc:${code}`,
+        };
+      } else {
+        replyHtml = '🔕 Berhenti memantau.';
+      }
       toast = '🔕 Berhenti memantau';
     } else if (data.startsWith('watch_slug:')) {
       const slug = data.slice('watch_slug:'.length);
       const { item } = this.db.addWatch({ watch_type: 'app', target_slug: slug });
       toast = `🔔 Memantau ${item.display_name}`;
+      replyHtml = `🔔 Berhasil memantau <b>${escapeTelegramHtml(item.display_name)}</b>!`;
     } else if (data.startsWith('unwatch_slug:')) {
       const slug = data.slice('unwatch_slug:'.length);
       this.db.removeWatchBySlug(slug);
       toast = '🔕 Berhenti memantau';
+      replyHtml = `🔕 Berhenti memantau <code>${escapeTelegramHtml(slug)}</code>.`;
     } else if (data.startsWith('unwatch_id:')) {
       const id = Number.parseInt(data.slice('unwatch_id:'.length), 10);
+      const existing = Number.isFinite(id)
+        ? this.db.listWatchlist().find((w) => w.id === id)
+        : null;
       if (Number.isFinite(id)) this.db.removeWatch(id);
       toast = '🗑 Dihapus dari watchlist';
+      replyHtml = existing
+        ? `🗑 <b>${escapeTelegramHtml(existing.display_name)}</b> dihapus dari watchlist.`
+        : '🗑 Dihapus dari watchlist.';
+      removeRowByCallback = true;
     }
 
-    await this.apiCall(token, 'answerCallbackQuery', {
-      callback_query_id: cb.id,
-      text: toast,
-      show_alert: false,
-    }).catch(() => {});
+    // Update inline keyboard on the message when available (works both live & in delayed cron runs)
+    const origKeyboard = cb.message?.reply_markup?.inline_keyboard;
+    if (cb.message?.message_id && Array.isArray(origKeyboard) && (buttonReplacement || removeRowByCallback)) {
+      const nextKeyboard = removeRowByCallback
+        ? origKeyboard.filter((row) => !row.some((b) => b.callback_data === data))
+        : origKeyboard.map((row) =>
+            row.map((b) => (b.callback_data === data ? { ...b, ...buttonReplacement } : b))
+          );
+      await this.apiCall(token, 'editMessageReplyMarkup', {
+        chat_id: chatId,
+        message_id: cb.message.message_id,
+        reply_markup: { inline_keyboard: nextKeyboard },
+      }).catch(() => {});
+    }
+
+    let answeredToast = false;
+    try {
+      await this.apiCall(token, 'answerCallbackQuery', {
+        callback_query_id: cb.id,
+        text: toast,
+        show_alert: false,
+      });
+      answeredToast = true;
+    } catch {
+      answeredToast = false;
+    }
+
+    // If callback_query expired before cron ran (>30s), send explicit chat confirmation so user gets feedback
+    if (!answeredToast && replyHtml) {
+      await this.sendReply(token, chatId, replyHtml).catch(() => {});
+    }
   }
 }
 

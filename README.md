@@ -36,7 +36,7 @@ Katalog Web di **[alfarizigan.github.io/dailyuploads-radar](https://alfarizigan.
 Jika ingin menerima **notifikasi otomatis di HP (Telegram / Discord)** saat aplikasi yang ditandai ada update baru:
 
 1. Buat bot di Telegram lewat **[@BotFather](https://t.me/BotFather)** (`/newbot`) → salin **Bot Token**.
-2. Ambil **Chat ID** Telegram kamu (bisa chat ke `@userinfobot`, atau uji langsung lewat tab **Pengaturan → 🧪 Test Kirim Telegram** di Web UI).
+2. Buka bot kamu di Telegram lalu kirim pesan `/start`. Buka tab **Pengaturan** di Web UI → tempel Bot Token → klik **🔍 Deteksi Chat ID Otomatis** (otomatis mengisi **Chat ID** kamu) → klik **🧪 Test Kirim Telegram** untuk memastikan pesan masuk!
 3. Buka repo ini di GitHub → **Settings** → **Secrets and variables** → **Actions** → klik **New repository secret**:
    - `TELEGRAM_BOT_TOKEN` = Token dari BotFather
    - `TELEGRAM_CHAT_ID` = Chat ID Telegram kamu (bisa lebih dari satu, pisahkan dengan koma)

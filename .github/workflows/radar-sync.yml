@@ -48,13 +48,18 @@ jobs:
 
       - name: Restore previous cloud state
         run: |
-          if git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1; then
+          status=0
+          git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1 || status=$?
+          if [ "$status" -eq 0 ]; then
             git fetch --depth=1 origin radar-state
             git show origin/radar-state:cloud-state.json > /tmp/cloud-state.json
             echo "Restored cloud-state.json from radar-state branch"
-          elif [ -f data/cloud-state.json ]; then
+          elif [ "$status" -eq 2 ] && [ -f data/cloud-state.json ]; then
             cp data/cloud-state.json /tmp/cloud-state.json
-            echo "Seeded cloud-state.json from main branch"
+            echo "Seeded cloud-state.json from main branch (initial bootstrap)"
+          elif [ "$status" -ne 2 ]; then
+            echo "::error::git ls-remote failed with exit code $status; aborting to protect radar-state"
+            exit "$status"
           fi
 
       - name: Run DailyUploads Sync, Watchlist Matcher & Telegram Queue
@@ -73,7 +78,13 @@ jobs:
         run: node --no-warnings src/cloud-sync.js
 
       - name: Persist compact state to radar-state branch (zero history bloat)
+        if: >-
+          always() &&
+          (steps.sync.outcome == 'success' || steps.sync.outputs.preserve_user_state == 'true')
         run: |
+          if [ ! -f /tmp/cloud-state.json ]; then
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BLOB=$(git hash-object -w /tmp/cloud-state.json)
@@ -83,18 +94,25 @@ jobs:
 
       - name: Check if gh-pages branch exists
         id: check_pages
+        if: steps.sync.outcome == 'success'
         run: |
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+          status=0
+          git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1 || status=$?
+          if [ "$status" -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$status" -eq 2 ]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::git ls-remote gh-pages failed with exit code $status"
+            exit "$status"
           fi
 
       - name: Deploy Cloud Web UI & Catalog to GitHub Pages (gh-pages)
         if: >-
-          github.event_name != 'schedule' ||
-          steps.sync.outputs.pages_needs_deploy == 'true' ||
-          steps.check_pages.outputs.exists == 'false'
+          steps.sync.outcome == 'success' &&
+          (github.event_name != 'schedule' ||
+           steps.sync.outputs.pages_needs_deploy == 'true' ||
+           steps.check_pages.outputs.exists == 'false')
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

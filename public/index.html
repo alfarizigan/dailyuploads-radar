@@ -307,6 +307,9 @@
           <input type="text" id="newSourceInput" class="input" placeholder="Username atau URL (mis. https://dailyuploads.net/users/nama_user)" required />
           <button type="submit" class="btn btn-primary">+ Tambah Source</button>
         </form>
+        <div id="cloudSourcesHint" class="status-box mt-12 hidden">
+          ☁️ Di Mode Cloud, source tambahan dapat diatur lewat GitHub Repository Variables → <code>EXTRA_SOURCES</code> (pisahkan dengan koma).
+        </div>
         <div id="sourcesList" class="stack-list mt-12"></div>
       </div>
 
@@ -331,7 +334,7 @@
 
         <div class="status-box ok mt-12">
           <b>Cara Pasang Notifikasi Push Telegram 24/7 di Cloud:</b><br />
-          1. Buat bot di <b>@BotFather</b> (salin Token) &amp; dapatkan Chat ID kamu (bisa coba tombol <b>🧪 Test Kirim Telegram</b> di bawah untuk tes!).<br />
+          1. Buat bot di <b>@BotFather</b> (salin Token), kirim pesan <code>/start</code> ke bot kamu, lalu gunakan tombol <b>🔍 Deteksi Chat ID Otomatis</b> &amp; <b>🧪 Test Kirim Telegram</b> di bawah untuk verifikasi!<br />
           2. Klik <b>🔐 Atur Secrets Telegram / Webhook</b> di atas → tambahkan Repository Secret <code>TELEGRAM_BOT_TOKEN</code> dan <code>TELEGRAM_CHAT_ID</code> (opsional: <code>WEBHOOK_URL</code> untuk Discord).<br />
           3. Untuk menandai aplikasi agar dipantau 24/7 di Cloud: chat <code>/watch NamaAplikasi</code> ke Bot Telegram kamu, <b>atau</b> isi GitHub Token opsional di bawah agar tombol <b>🔔 Watch</b> di Web ini langsung tersinkron ke Cloud!
         </div>
@@ -370,8 +373,8 @@
         </div>
 
         <div class="card">
-          <h3>✈️ Telegram Bot (Notifikasi + Search Interaktif!)</h3>
-          <p class="muted-text small-p">
+          <h3 id="tgSettingsTitle">✈️ Telegram Bot (Notifikasi + Search Interaktif!)</h3>
+          <p class="muted-text small-p" id="tgSettingsDesc">
             1. Buat bot di <b>@BotFather</b> lalu salin Token.<br />
             2. Aktifkan Interactive Bot di bawah, simpan, lalu kirim <code>/start</code> ke bot kamu untuk mendapatkan <b>Chat ID</b>.<br />
             3. Bot bisa dipakai langsung untuk <code>/search</code>, <code>/latest</code>, <code>/watch</code>, <code>/watchlist</code>, <code>/sync</code>!
@@ -387,18 +390,19 @@
             <label for="setTgChatId">Telegram Chat ID</label>
             <input type="text" id="setTgChatId" class="input" placeholder="Contoh: 123456789 (pisahkan koma jika lebih dari 1)" />
           </div>
-          <label class="switch-row">
+          <label class="switch-row" id="tgLongPollingRow">
             <input type="checkbox" id="setTgEnabled" />
             <span>Aktifkan Interactive Telegram Bot (Long Polling)</span>
           </label>
-          <div class="mt-12">
+          <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" id="btnDetectTgChatId" class="btn btn-ghost btn-sm hidden">🔍 Deteksi Chat ID Otomatis</button>
             <button type="button" class="btn btn-ghost btn-sm" data-test-channel="telegram">🧪 Test Kirim Telegram</button>
           </div>
         </div>
 
         <div class="card">
           <h3>🔗 Discord / Generic Webhook</h3>
-          <p class="muted-text small-p">
+          <p class="muted-text small-p" id="webhookSettingsDesc">
             Tempelkan Discord Webhook URL (otomatis format Embed keren) atau URL webhook lain (JSON POST).
           </p>
           <div class="form-group mt-12">
@@ -410,7 +414,7 @@
           </div>
         </div>
 
-        <div class="settings-footer">
+        <div class="settings-footer" id="localSettingsFooter">
           <button type="submit" class="btn btn-primary">💾 Simpan Pengaturan</button>
         </div>
       </form>
