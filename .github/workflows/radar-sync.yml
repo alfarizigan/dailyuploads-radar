@@ -1,0 +1,111 @@
+name: DailyUploads Radar Cloud Sync
+
+on:
+  schedule:
+    # Runs automatically in GitHub Cloud every 15 minutes without needing a local PC
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Sync mode (auto = quick every 15m + full every 24h)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - quick
+          - full
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'watchlist.json'
+      - 'data/cloud-state.json'
+      - '.github/workflows/radar-sync.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dailyuploads-radar-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync DailyUploads & Notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore previous cloud state
+        run: |
+          if git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1; then
+            git fetch --depth=1 origin radar-state
+            git show origin/radar-state:cloud-state.json > /tmp/cloud-state.json
+            echo "Restored cloud-state.json from radar-state branch"
+          elif [ -f data/cloud-state.json ]; then
+            cp data/cloud-state.json /tmp/cloud-state.json
+            echo "Seeded cloud-state.json from main branch"
+          fi
+
+      - name: Run DailyUploads Sync, Watchlist Matcher & Telegram Queue
+        id: sync
+        env:
+          CLOUD_MODE: '1'
+          CLOUD_STATE_PATH: /tmp/cloud-state.json
+          WATCHLIST_FILE: watchlist.json
+          SYNC_MODE: ${{ inputs.mode || 'auto' }}
+          DEFAULT_SOURCE_USER: ${{ vars.DEFAULT_SOURCE_USER || 'user_hidden' }}
+          EXTRA_SOURCES: ${{ vars.EXTRA_SOURCES || '' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          CLOUD_WEB_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: node --no-warnings src/cloud-sync.js
+
+      - name: Persist compact state to radar-state branch (zero history bloat)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BLOB=$(git hash-object -w /tmp/cloud-state.json)
+          TREE=$(printf "100644 blob %s\tcloud-state.json\n" "$BLOB" | git mktree)
+          COMMIT=$(git commit-tree "$TREE" -m "chore(state): sync $(date -u +%Y-%m-%dT%H:%M:%SZ)")
+          git push --force origin "$COMMIT:refs/heads/radar-state"
+
+      - name: Check if gh-pages branch exists
+        id: check_pages
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy Cloud Web UI & Catalog to GitHub Pages (gh-pages)
+        if: >-
+          github.event_name != 'schedule' ||
+          steps.sync.outputs.pages_needs_deploy == 'true' ||
+          steps.check_pages.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          STAGE=$(mktemp -d)
+          cp -R public/. "$STAGE/"
+          mkdir -p "$STAGE/data"
+          cp /tmp/cloud-state.json "$STAGE/data/cloud-state.json"
+          touch "$STAGE/.nojekyll"
+          rm -f /tmp/ghpages.idx
+          GIT_INDEX_FILE=/tmp/ghpages.idx git --work-tree="$STAGE" add -A
+          TREE=$(GIT_INDEX_FILE=/tmp/ghpages.idx git write-tree)
+          COMMIT=$(git commit-tree "$TREE" -m "deploy(pages): cloud catalog $(date -u +%Y-%m-%dT%H:%M:%SZ)")
+          git push --force origin "$COMMIT:refs/heads/gh-pages"
+          rm -rf "$STAGE" /tmp/ghpages.idx
