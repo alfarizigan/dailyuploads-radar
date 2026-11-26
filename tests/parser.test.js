@@ -176,6 +176,30 @@ test('parseFilename handles macOS DMG/PKG and community unsigned IPAs', () => {
   const audioB1 = parseFilename('AudioYam_b1.ipa');
   assert.equal(audioB1.app_name, 'AudioYam');
   assert.equal(audioB1.version, 'Build 1');
+
+  // Dotted semver + underscore build suffix (_5.0.1_b4), hyphenated vPrefixed build (-v2.1.8-b118), letter patch (.v1.2.98d), glued Univ tag (v1.9.2Univ), and [MacKed] zip platform
+  const filza = parseFilename('Filza_5.0.1_b4.ipa');
+  assert.equal(filza.app_name, 'Filza');
+  assert.equal(filza.app_slug, 'filza');
+  assert.equal(filza.version, '5.0.1-b4');
+
+  const zeus = parseFilename('Zeus-v2.1.8-b118.ipa');
+  assert.equal(zeus.app_name, 'Zeus');
+  assert.equal(zeus.version, '2.1.8-b118');
+
+  const scritchy = parseFilename('Scritchy.Scratchy.v1.2.98d.MacOS-U2B.dmg');
+  assert.equal(scritchy.app_name, 'Scritchy Scratchy');
+  assert.equal(scritchy.version, '1.2.98d');
+
+  const glued = parseFilename('Demong_Hunter_1_Action_RPG_(v1.9.2Univ_FW_LP_64bit_os150_ok27)-user_hidden.bfi2.ipa');
+  assert.equal(glued.app_name, 'Demong Hunter 1 Action RPG');
+  assert.equal(glued.version, '1.9.2');
+  assert.ok(glued.tags.includes('Universal'));
+
+  const mackedZip = parseFilename('CleanMyMac_5.7.4_[MacKed].zip');
+  assert.equal(mackedZip.app_name, 'CleanMyMac');
+  assert.equal(mackedZip.version, '5.7.4');
+  assert.equal(mackedZip.platform, 'macOS');
 });
 
 test('compareVersions accurately orders semantic and build versions', () => {

@@ -73,10 +73,13 @@ test('HTTP API end-to-end integration test', async () => {
     const patchW = await fetch(`${app.url}/api/watchlist/${added.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notify_enabled: false, notes: 'tunggu 2.3' }),
+      body: JSON.stringify({ notify_enabled: false, notes: 'wait for 2.3' }),
     }).then((r) => r.json());
     assert.equal(patchW.item.notify_enabled, 0);
-    assert.equal(patchW.item.notes, 'tunggu 2.3');
+    assert.equal(patchW.item.notes, 'wait for 2.3');
+
+    const exportedWl = await fetch(`${app.url}/api/watchlist/export`).then((r) => r.json());
+    assert.equal(exportedWl[0].notify_enabled, 0);
 
     // 5. CSV export escapes formula-leading cells
     const csvText = await fetch(`${app.url}/api/export?format=csv`).then((r) => r.text());

@@ -269,6 +269,7 @@ async function handleApi(req, res, method, pathname, qs, { db, syncManager, noti
       platform_filter: w.platform_filter,
       source_user: w.source_user,
       notes: w.notes,
+      notify_enabled: w.notify_enabled ? 1 : 0,
     }));
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',

@@ -139,9 +139,9 @@ function inferPlatform(ext, rawFilename) {
   if (['exe', 'msi'].includes(e)) return 'Windows';
   if (['apk', 'apks', 'xapk'].includes(e)) return 'Android';
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(e)) {
-    if (/macos|osx|\bmac\b/i.test(rawFilename)) return 'macOS';
-    if (/\bios\b|iphone|ipad|trollstore/i.test(rawFilename)) return 'iOS';
-    if (/win64|win32|windows/i.test(rawFilename)) return 'Windows';
+    if (/macos|osx|\bmac\b|\bmacked\b|\btnt\b|\bhciso\b|cleanmymac|\.app\b/i.test(rawFilename)) return 'macOS';
+    if (/\bios\b|iphone|ipad|trollstore|\.ipa\b/i.test(rawFilename)) return 'iOS';
+    if (/win64|win32|windows|\bx64\b/i.test(rawFilename)) return 'Windows';
     return 'Archive';
   }
   if (e === 'iso') return 'Windows';
@@ -228,7 +228,15 @@ function parseFilename(rawFilename) {
     base = base.slice(0, uhParenMatch.index);
     const tokens = inside.split(/[_\s]+/).filter(Boolean);
     if (tokens.length > 0) {
-      version = tokens[0].replace(/^v/i, '');
+      let rawVer = tokens[0].replace(/^v/i, '');
+      const gluedTagMatch = rawVer.match(
+        /^(\d+(?:\.\d+)*(?:[-.][a-zA-Z0-9.]+)?)(Univ|Universal|iPad|iPhone|PI|FW|LP|64bit)$/i
+      );
+      if (gluedTagMatch) {
+        rawVer = gluedTagMatch[1];
+        tags.add(normalizeTagLabel(gluedTagMatch[2]));
+      }
+      version = rawVer;
       for (const tok of tokens.slice(1)) {
         const iosVal = parseOsToken(tok);
         if (iosVal !== null) {
@@ -341,13 +349,15 @@ function parseFilename(rawFilename) {
     }
 
     // Extract version from the end of `base`
-    // Case 1: explicit v-prefixed version e.g. .v2.16, -v5.4.5, -v1.0.0-beta.2, _v2026.11.21, -v2, .v1097911
+    // Case 1: explicit v-prefixed version e.g. .v2.16, -v5.4.5, -v1.0.0-beta.2, -v2.1.8-b118, .v1.2.98d, _v2026.11.21, -v2
     const vPrefixed = base.match(
-      /[-_. ]v(\d+(?:\.\d+)*(?:[ab]\d*|[-.](?:alpha|beta|rc|pre|dev|build)[.-]?\d*|-\d{1,8})*)$/i
+      /[-_. ]v(\d+(?:\.\d+)*(?:[a-z]\d*|[-_.](?:alpha|beta|rc|pre|dev|build|b|a)[.-]?\d*|-\d{1,8})*)$/i
     );
-    // Case 2: numeric dotted version at end e.g. _0.8.1, -0.2.27, _3.25, _0.20.1a, _0.1.3-20261031
+    // Case 2: numeric dotted version at end e.g. _0.8.1, -0.2.27, _3.25, _0.20.1a, _5.0.1_b4, _0.1.3-20261031
     const numDotted = !vPrefixed
-      ? base.match(/[-_. ](\d+(?:\.\d+)+(?:[a-z]\d*|[-.](?:beta|alpha|rc|b|a|pre)\d*|-\d{1,8})?)$/i)
+      ? base.match(
+          /[-_. ](\d+(?:\.\d+)+(?:[a-z]\d*|[-_.](?:beta|alpha|rc|build|b|a|pre)[.-]?\d*|-\d{1,8})*)$/i
+        )
       : null;
     // Case 3: underscore-separated semantic version e.g. Cubase_Pro_16_0_5
     const numUnderscore = !vPrefixed && !numDotted ? base.match(/_(\d{1,3})_(\d{1,3})_(\d{1,3})$/) : null;
@@ -366,10 +376,10 @@ function parseFilename(rawFilename) {
         : null;
 
     if (vPrefixed) {
-      version = vPrefixed[1];
+      version = vPrefixed[1].replace(/_/g, '-');
       base = base.slice(0, vPrefixed.index);
     } else if (numDotted) {
-      version = numDotted[1];
+      version = numDotted[1].replace(/_/g, '-');
       base = base.slice(0, numDotted.index);
     } else if (numUnderscore) {
       version = `${numUnderscore[1]}.${numUnderscore[2]}.${numUnderscore[3]}`;
@@ -412,8 +422,12 @@ function parseFilename(rawFilename) {
     // Strip trailing language / platform markers left after version extraction e.g. _enUS, -ios
     base = base.replace(/[-_. ](?:enUS|ios)$/i, '');
 
-    // If dots were used as word separators (e.g. "The.Battle.of.Polytopia"), convert dots to spaces
-    if (!base.includes('_') && !base.includes(' ') && (base.match(/\./g) || []).length >= 2) {
+    // If dots were used as word separators (e.g. "The.Battle.of.Polytopia", "Scritchy.Scratchy"), convert dots to spaces
+    if (
+      !base.includes('_') &&
+      !base.includes(' ') &&
+      ((base.match(/\./g) || []).length >= 2 || /^[A-Z][a-z]{2,}\.[A-Z][a-zA-Z0-9]{2,}$/.test(base))
+    ) {
       base = base.replace(/\./g, ' ');
     }
   }

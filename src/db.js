@@ -528,7 +528,7 @@ class RadarDB {
 
   /* ── Search, Filter, Sort & Grouping ──────────────────── */
 
-  hydrateFileRow(row, watchedSlugs = null) {
+  hydrateFileRow(row, appWatches = null) {
     if (!row) return null;
     let tags = [];
     try {
@@ -539,18 +539,55 @@ class RadarDB {
     const result = {
       ...row,
       tags,
-      is_watched: watchedSlugs ? watchedSlugs.has(row.app_slug) : Boolean(row.is_watched),
+      is_watched: appWatches ? this.isFileWatched(row, appWatches) : Boolean(row.is_watched),
     };
     delete result.tags_json;
     delete result.rn;
     return result;
   }
 
-  getWatchedSlugSet() {
-    const rows = this.db
-      .prepare("SELECT target_slug FROM watchlist WHERE watch_type = 'app'")
+  getAppWatchRules() {
+    return this.db
+      .prepare("SELECT target_slug, platform_filter, source_user FROM watchlist WHERE watch_type = 'app'")
       .all();
-    return new Set(rows.map((r) => r.target_slug));
+  }
+
+  isFileWatched(row, appWatches = null) {
+    const rules = appWatches || this.getAppWatchRules();
+    return rules.some(
+      (w) =>
+        Boolean(w.target_slug) &&
+        w.target_slug === row.app_slug &&
+        (!w.platform_filter || w.platform_filter === row.platform) &&
+        (!w.source_user || w.source_user === row.source_user)
+    );
+  }
+
+  getWatchedSlugSet() {
+    return new Set(this.getAppWatchRules().map((r) => r.target_slug));
+  }
+
+  _matchesWatchRuleRow(fileRow, watchRule) {
+    if (watchRule.source_user && watchRule.source_user !== fileRow.source_user) return false;
+    if (watchRule.platform_filter && watchRule.platform_filter !== fileRow.platform) return false;
+    if (watchRule.watch_type === 'app') {
+      return Boolean(watchRule.target_slug) && fileRow.app_slug === watchRule.target_slug;
+    }
+    const terms = foldDiacritics(watchRule.keyword || '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (terms.length === 0) return false;
+    const extraTags =
+      fileRow.tags_text !== undefined
+        ? fileRow.tags_text
+        : Array.isArray(fileRow.tags)
+          ? fileRow.tags.join(' ')
+          : '';
+    const haystack = foldDiacritics(
+      `${fileRow.app_name || ''} ${fileRow.raw_filename || ''} ${extraTags}`
+    ).toLowerCase();
+    return terms.every((t) => haystack.includes(t));
   }
 
   buildFilterWhere(params = {}) {
@@ -618,39 +655,28 @@ class RadarDB {
       const watches = this.db
         .prepare('SELECT watch_type, target_slug, keyword, platform_filter, source_user FROM watchlist')
         .all();
-      const ruleClauses = [];
-      for (const w of watches) {
-        const conds = [];
-        if (w.source_user) {
-          conds.push('f.source_user = ?');
-          bindings.push(w.source_user);
-        }
-        if (w.platform_filter) {
-          conds.push('f.platform = ?');
-          bindings.push(w.platform_filter);
-        }
-        if (w.watch_type === 'app' && w.target_slug) {
-          conds.push('f.app_slug = ?');
-          bindings.push(w.target_slug);
-          ruleClauses.push(`(${conds.join(' AND ')})`);
-        } else if (w.watch_type === 'keyword' && w.keyword) {
-          const terms = String(w.keyword)
-            .toLowerCase()
-            .split(/\s+/)
-            .filter(Boolean);
-          if (terms.length > 0) {
-            for (const t of terms) {
-              conds.push("LOWER(f.app_name || ' ' || f.raw_filename || ' ' || f.tags_text) LIKE ? ESCAPE '\\'");
-              bindings.push(`%${t.replace(/[\\%_]/g, '\\$&')}%`);
-            }
-            ruleClauses.push(`(${conds.join(' AND ')})`);
-          }
-        }
-      }
-      if (ruleClauses.length === 0) {
+      if (watches.length === 0) {
         where.push('0 = 1');
       } else {
-        where.push(`(${ruleClauses.join(' OR ')})`);
+        const candidates = this.db
+          .prepare(
+            'SELECT file_code, source_user, platform, app_slug, app_name, raw_filename, tags_text FROM files WHERE is_active = 1'
+          )
+          .all();
+        const matchedCodes = candidates
+          .filter((row) => watches.some((w) => this._matchesWatchRuleRow(row, w)))
+          .map((row) => row.file_code);
+        if (matchedCodes.length === 0) {
+          where.push('0 = 1');
+        } else {
+          const chunks = [];
+          for (let i = 0; i < matchedCodes.length; i += 500) {
+            const slice = matchedCodes.slice(i, i + 500);
+            chunks.push(`f.file_code IN (${slice.map(() => '?').join(',')})`);
+            bindings.push(...slice);
+          }
+          where.push(`(${chunks.join(' OR ')})`);
+        }
       }
     }
 
@@ -692,7 +718,7 @@ class RadarDB {
     const sort = String(params.sort || 'newest');
 
     const { whereSql, bindings } = this.buildFilterWhere(params);
-    const watchedSlugs = this.getWatchedSlugSet();
+    const appWatches = this.getAppWatchRules();
 
     const sortMapFlat = {
       newest: `COALESCE(${EFFECTIVE_AGE_SQL}, 99999) ASC, f.list_order ASC`,
@@ -734,7 +760,7 @@ class RadarDB {
         .all(...bindings, limit, offset);
 
       return {
-        items: rows.map((r) => this.hydrateFileRow(r, watchedSlugs)),
+        items: rows.map((r) => this.hydrateFileRow(r, appWatches)),
         total,
         page,
         limit,
@@ -791,7 +817,7 @@ class RadarDB {
       .all(...bindings, limit, offset);
 
     return {
-      items: rows.map((r) => this.hydrateFileRow(r, watchedSlugs)),
+      items: rows.map((r) => this.hydrateFileRow(r, appWatches)),
       total,
       page,
       limit,
@@ -801,20 +827,20 @@ class RadarDB {
   }
 
   getAppVersions(appSlug, sourceUser = '') {
-    const watchedSlugs = this.getWatchedSlugSet();
+    const appWatches = this.getAppWatchRules();
     const sql = sourceUser
       ? `SELECT f.*, ${EFFECTIVE_AGE_SQL} AS uploaded_days_ago FROM files f WHERE f.app_slug = ? AND f.source_user = ? AND f.is_active = 1 ORDER BY f.list_order ASC`
       : `SELECT f.*, ${EFFECTIVE_AGE_SQL} AS uploaded_days_ago FROM files f WHERE f.app_slug = ? AND f.is_active = 1 ORDER BY f.list_order ASC`;
     const rows = sourceUser
       ? this.db.prepare(sql).all(appSlug, sourceUser)
       : this.db.prepare(sql).all(appSlug);
-    return rows.map((r) => this.hydrateFileRow(r, watchedSlugs));
+    return rows.map((r) => this.hydrateFileRow(r, appWatches));
   }
 
   getFileByCode(fileCode) {
     const row = this.db.prepare('SELECT * FROM files WHERE file_code = ?').get(fileCode);
     if (!row) return null;
-    return this.hydrateFileRow(row, this.getWatchedSlugSet());
+    return this.hydrateFileRow(row, this.getAppWatchRules());
   }
 
   getFacets(sourceUser = 'all') {
@@ -977,11 +1003,13 @@ class RadarDB {
     platform_filter = '',
     source_user = '',
     notes = '',
+    notify_enabled = 1,
   }) {
     const type = watch_type === 'keyword' ? 'keyword' : 'app';
     let slug = String(target_slug || '').trim();
     let kw = String(keyword || '').trim();
     let name = String(display_name || '').trim();
+    const notifyVal = notify_enabled === undefined ? 1 : notify_enabled ? 1 : 0;
 
     if (type === 'app') {
       if (!slug && name) slug = slugifyAppName(name);
@@ -1015,9 +1043,9 @@ class RadarDB {
         .prepare(
           `INSERT INTO watchlist
            (watch_type, target_slug, keyword, display_name, platform_filter, source_user, last_known_version, last_known_file_code, notes, notify_enabled, created_at)
-           VALUES ('app', ?, '', ?, ?, ?, ?, ?, ?, 1, ?)`
+           VALUES ('app', ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(slug, name, platform_filter || '', source_user || '', lastVer, lastCode, notes || '', nowIso());
+        .run(slug, name, platform_filter || '', source_user || '', lastVer, lastCode, notes || '', notifyVal, nowIso());
 
       return {
         item: this.db.prepare('SELECT * FROM watchlist WHERE id = ?').get(res.lastInsertRowid),
@@ -1046,7 +1074,7 @@ class RadarDB {
       .prepare(
         `INSERT INTO watchlist
          (watch_type, target_slug, keyword, display_name, platform_filter, source_user, last_known_version, last_known_file_code, notes, notify_enabled, created_at)
-         VALUES ('keyword', '', ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+         VALUES ('keyword', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         kw,
@@ -1056,6 +1084,7 @@ class RadarDB {
         latest?.version || '',
         latest?.file_code || '',
         notes || '',
+        notifyVal,
         nowIso()
       );
 
@@ -1113,6 +1142,7 @@ class RadarDB {
           platform_filter: raw.platform_filter || '',
           source_user: raw.source_user || '',
           notes: raw.notes || '',
+          notify_enabled: raw.notify_enabled !== undefined ? (raw.notify_enabled ? 1 : 0) : 1,
         });
         if (res.created) added += 1;
         else skipped += 1;
@@ -1134,7 +1164,7 @@ class RadarDB {
     const prevMeta = this.getWatchlistFileMeta();
 
     if (prevMeta.hash === hash) {
-      return { added: 0, removed: 0, changed: false };
+      return { added: 0, removed: 0, updated: 0, changed: false };
     }
 
     let parsed = [];
@@ -1157,6 +1187,7 @@ class RadarDB {
         platform_filter: raw.platform_filter || '',
         source_user: raw.source_user || '',
         notes: raw.notes || '',
+        notify_enabled: raw.notify_enabled !== undefined ? (raw.notify_enabled ? 1 : 0) : 1,
       };
       const key = getWatchDedupKey(normalized);
       if (key.endsWith('::::')) continue;
@@ -1165,19 +1196,30 @@ class RadarDB {
 
     const prevKeys = new Set(prevMeta.keys || []);
     const dbWatches = this.db.prepare('SELECT * FROM watchlist').all();
-    const dbKeySet = new Set(dbWatches.map((w) => getWatchDedupKey(w)));
+    const dbWatchByKey = new Map(dbWatches.map((w) => [getWatchDedupKey(w), w]));
 
     let added = 0;
     let removed = 0;
+    let updated = 0;
 
     for (const [key, item] of currMap.entries()) {
-      const shouldAdd = isAuthoritative ? !dbKeySet.has(key) : !prevKeys.has(key) && !dbKeySet.has(key);
-      if (shouldAdd) {
-        try {
-          const res = this.addWatch(item);
-          if (res.created) added += 1;
-        } catch {
-          // skip invalid entry
+      const existing = dbWatchByKey.get(key);
+      if (!existing) {
+        const shouldAdd = isAuthoritative ? true : !prevKeys.has(key);
+        if (shouldAdd) {
+          try {
+            const res = this.addWatch(item);
+            if (res.created) added += 1;
+          } catch {
+            // skip invalid entry
+          }
+        }
+      } else {
+        const nextNotify = item.notify_enabled ? 1 : 0;
+        const nextNotes = String(item.notes || '');
+        if (existing.notify_enabled !== nextNotify || existing.notes !== nextNotes) {
+          this.updateWatch(existing.id, { notify_enabled: nextNotify, notes: nextNotes });
+          updated += 1;
         }
       }
     }
@@ -1191,7 +1233,7 @@ class RadarDB {
     }
 
     this.setWatchlistFileMeta({ hash, keys: [...currMap.keys()] });
-    return { added, removed, changed: added > 0 || removed > 0 };
+    return { added, removed, updated, changed: added > 0 || removed > 0 || updated > 0 };
   }
 
   /* ── Update Matching & Alerts ─────────────────────────── */
@@ -1225,27 +1267,8 @@ class RadarDB {
     this.db.exec('BEGIN');
     try {
       for (const watch of watches) {
-        const terms =
-          watch.watch_type === 'keyword'
-            ? watch.keyword
-                .toLowerCase()
-                .split(/\s+/)
-                .filter(Boolean)
-            : [];
-
         for (const file of orderedFiles) {
-          if (watch.source_user && watch.source_user !== file.source_user) continue;
-          if (watch.platform_filter && watch.platform_filter !== file.platform) continue;
-
-          let matched = false;
-          if (watch.watch_type === 'app') {
-            matched = file.app_slug === watch.target_slug;
-          } else if (terms.length > 0) {
-            const haystack = `${file.app_name} ${file.raw_filename} ${(file.tags || []).join(' ')}`.toLowerCase();
-            matched = terms.every((t) => haystack.includes(t));
-          }
-
-          if (!matched) continue;
+          if (!this._matchesWatchRuleRow(file, watch)) continue;
 
           const oldVersion = watch.last_known_version || '';
           const newVersion = file.version || '';

@@ -137,27 +137,65 @@
     return `${days}d ago`;
   }
 
-  /* ── URL State Deep-Linking ───────────────────────────── */
+  /* ── URL State Deep-Linking & Clipboard Helper ────────── */
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to execCommand fallback (e.g. non-HTTPS LAN / WebKit restrictions)
+      }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = String(text ?? '');
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    let copied = false;
+    try {
+      copied = document.execCommand('copy');
+    } catch {
+      copied = false;
+    } finally {
+      ta.remove();
+    }
+    if (!copied) throw new Error('Clipboard access denied');
+    return true;
+  }
+
+  function setSelectValueSafe(selectEl, desiredVal, fallbackVal = 'all') {
+    if (!selectEl) return fallbackVal;
+    const hasMatch = Array.from(selectEl.options).some((o) => o.value === desiredVal);
+    const finalVal = hasMatch ? desiredVal : fallbackVal;
+    selectEl.value = finalVal;
+    return finalVal;
+  }
 
   function hydrateStateFromUrl() {
     try {
       const qs = new URLSearchParams(window.location.search);
       const tab = qs.get('tab');
-      if (tab && VALID_TABS.has(tab)) state.tab = tab;
-      if (qs.has('q')) state.q = qs.get('q').trim();
-      if (qs.get('source')) state.source = qs.get('source');
-      if (qs.get('platform')) state.platform = qs.get('platform');
-      if (qs.get('ext')) state.extension = qs.get('ext');
-      if (qs.get('tag')) state.tag = qs.get('tag');
-      if (qs.get('ios')) state.maxIos = qs.get('ios');
-      if (qs.get('days')) state.maxDays = qs.get('days');
-      if (qs.get('size')) state.sizeRange = qs.get('size');
-      if (qs.get('watched') === '1' || qs.get('watched') === 'true') state.watchedOnly = true;
-      if (qs.get('grouped') === '0' || qs.get('grouped') === 'false') state.grouped = false;
+      state.tab = tab && VALID_TABS.has(tab) ? tab : 'catalog';
+      state.q = qs.has('q') ? qs.get('q').trim() : '';
+      state.source = qs.get('source') || 'all';
+      state.platform = qs.get('platform') || 'all';
+      state.extension = qs.get('ext') || 'all';
+      state.tag = qs.get('tag') || 'all';
+      state.maxIos = qs.get('ios') || 'all';
+      state.maxDays = qs.get('days') || 'all';
+      state.sizeRange = qs.get('size') || 'all';
+      state.watchedOnly = qs.get('watched') === '1' || qs.get('watched') === 'true';
+      state.grouped = !(qs.get('grouped') === '0' || qs.get('grouped') === 'false');
       const sort = qs.get('sort');
-      if (sort && VALID_SORTS.has(sort)) state.sort = sort;
+      state.sort = sort && VALID_SORTS.has(sort) ? sort : 'newest';
       const p = Number.parseInt(qs.get('page'), 10);
-      if (Number.isFinite(p) && p > 1) state.page = p;
+      state.page = Number.isFinite(p) && p > 1 ? p : 1;
     } catch {
       // Ignore malformed URL params
     }
@@ -168,10 +206,10 @@
     if ($('btnClearSearch')) $('btnClearSearch').classList.toggle('hidden', !state.q);
     if ($('btnWatchQuery')) $('btnWatchQuery').classList.toggle('hidden', !state.q);
     if ($('searchKbdHint')) $('searchKbdHint').classList.toggle('hidden', Boolean(state.q));
-    if ($('filterSort')) $('filterSort').value = state.sort;
-    if ($('filterMaxIos')) $('filterMaxIos').value = state.maxIos;
-    if ($('filterMaxDays')) $('filterMaxDays').value = state.maxDays;
-    if ($('filterSize')) $('filterSize').value = state.sizeRange;
+    state.sort = setSelectValueSafe($('filterSort'), state.sort, 'newest');
+    state.maxIos = setSelectValueSafe($('filterMaxIos'), state.maxIos, 'all');
+    state.maxDays = setSelectValueSafe($('filterMaxDays'), state.maxDays, 'all');
+    state.sizeRange = setSelectValueSafe($('filterSize'), state.sizeRange, 'all');
     if ($('toggleGrouped')) $('toggleGrouped').checked = state.grouped;
     if ($('toggleWatchedOnly')) $('toggleWatchedOnly').checked = state.watchedOnly;
 
@@ -295,6 +333,11 @@
     if (wlIdMatch) {
       if (method === 'PATCH') {
         const updated = cloudEngine.updateWatch(wlIdMatch[1], body);
+        if (cloudEngine.getCloudSettings().github_pat) {
+          await cloudEngine
+            .syncWatchlistToGithub()
+            .catch((err) => toast(`GitHub sync failed: ${err.message}`, 'warn'));
+        }
         return { item: updated };
       }
       if (method === 'DELETE') {
@@ -510,15 +553,17 @@
     const srcSel = $('filterSource');
     if (st.sources && st.sources.length > 1) {
       srcWrap.classList.remove('hidden');
-      const cur = state.source;
       srcSel.innerHTML =
         `<option value="all">All Sources</option>` +
         st.sources
           .map((s) => `<option value="${esc(s.username)}">${esc(s.username)} (${s.active_files})</option>`)
           .join('');
-      srcSel.value = cur;
+      state.source = setSelectValueSafe(srcSel, state.source, 'all');
     } else {
       srcWrap.classList.add('hidden');
+      if (state.source !== 'all' && st.sources?.[0]?.username !== state.source) {
+        state.source = 'all';
+      }
     }
 
     if (st.sync?.isSyncing && st.sync.running?.length > 0) {
@@ -738,7 +783,7 @@
         <td><span class="ver-badge">${esc(ver)}</span></td>
         <td><span class="plat-badge plat-${esc(item.platform)}">${esc(item.platform)}</span></td>
         <td>${esc(item.size_text || '—')}</td>
-        <td>${esc(item.min_ios_label || '—')}</td>
+        <td>${item.min_ios_label ? `${esc(item.min_ios_label)}+` : '—'}</td>
         <td class="${isToday ? 'meta-today' : ''}">${esc(formatAge(item.uploaded_days_ago))}</td>
         <td>${dlCount}</td>
         <td>
@@ -832,13 +877,9 @@
                   ? `<button class="btn btn-ghost btn-xs" data-copy-url="${esc(tgCmd)}" title="Copy /watch command to send to your Telegram Bot">📲 Copy /watch</button>`
                   : ''
               }
-              ${
-                !state.isCloudMode || w.scope !== 'cloud'
-                  ? `<button class="btn btn-ghost btn-xs" data-toggle-notify="${esc(w.id)}" data-enabled="${w.notify_enabled}">
-                      ${w.notify_enabled ? '🔔 Alerts ON' : '🔕 Alerts OFF'}
-                    </button>`
-                  : ''
-              }
+              <button class="btn btn-ghost btn-xs" data-toggle-notify="${esc(w.id)}" data-enabled="${w.notify_enabled}">
+                ${w.notify_enabled ? '🔔 Alerts ON' : '🔕 Alerts OFF'}
+              </button>
               <button class="btn btn-danger-ghost btn-xs" data-del-watch="${esc(w.id)}">🗑 Remove</button>
             </div>
           </div>
@@ -1535,7 +1576,7 @@
       $('btnShareSearch').addEventListener('click', async () => {
         syncUrlFromState();
         try {
-          await navigator.clipboard.writeText(window.location.href);
+          await copyTextToClipboard(window.location.href);
           toast('🔗 Shareable search link copied to clipboard!', 'success');
         } catch {
           toast('Failed to copy link to clipboard', 'error');
@@ -1571,7 +1612,7 @@
       if (copyBtn) {
         const url = copyBtn.dataset.copyUrl;
         try {
-          await navigator.clipboard.writeText(url);
+          await copyTextToClipboard(url);
           toast(
             url.startsWith('/watch')
               ? `📲 Copied "${url}"! Paste and send it to your Telegram Bot.`
@@ -1919,6 +1960,56 @@
         triggerSync('quick');
       }
     });
+
+    // Browser Back/Forward URL state sync
+    window.addEventListener('popstate', () => {
+      hydrateStateFromUrl();
+      syncDomControlsFromState();
+      syncQuickChipUI();
+      refreshActiveTab().catch(() => {});
+    });
+  }
+
+  async function maybeBackgroundVerifyCloudFreshness() {
+    if (!state.isCloudMode || !cloudEngine) return;
+    const prevExported = cloudEngine.state.exported_at || '';
+    const exportedMs = prevExported ? Date.parse(prevExported) : 0;
+
+    // If initial branch snapshot is >3m old, verify head commit SHA in background so Fastly's 5m cache never hides a fresh run
+    if (!exportedMs || Date.now() - exportedMs > 3 * 60 * 1000) {
+      try {
+        const res = await cloudEngine.fetchRemoteState({ forceFresh: true });
+        if (res.exportedAt && res.exportedAt !== prevExported) {
+          await refreshActiveTab();
+        }
+      } catch {
+        // Non-fatal background check
+      }
+    }
+
+    // If user configured a GitHub PAT and cloud scrape is >25m stale (e.g. GitHub cron queue lag), auto-dispatch silently
+    const cfg = cloudEngine.getCloudSettings();
+    const lastSyncIso = cloudEngine.state.sources?.[0]?.last_sync_at || cloudEngine.state.exported_at || '';
+    const lastSyncMs = lastSyncIso ? Date.parse(lastSyncIso) : 0;
+    const lastAutoDispatch = Number.parseInt(safeStorageGet('du_last_auto_dispatch_ms', '0'), 10) || 0;
+    if (
+      cfg.github_pat &&
+      cfg.github_repo &&
+      lastSyncMs > 0 &&
+      Date.now() - lastSyncMs > 25 * 60 * 1000 &&
+      Date.now() - lastAutoDispatch > 15 * 60 * 1000
+    ) {
+      safeStorageSet('du_last_auto_dispatch_ms', String(Date.now()));
+      const baseExported = cloudEngine.state.exported_at;
+      cloudEngine
+        .triggerGithubWorkflow('quick')
+        .then(() => cloudEngine.waitForCloudSync(baseExported, { timeoutMs: 45000, intervalMs: 4000 }))
+        .then((w) => {
+          if (w.completed) return refreshActiveTab();
+          return undefined;
+        })
+        .catch(() => {});
+    }
   }
 
   async function detectAndInitRuntime() {
@@ -1995,6 +2086,7 @@
     bindEvents();
     await detectAndInitRuntime();
     await refreshActiveTab();
+    maybeBackgroundVerifyCloudFreshness();
 
     // Keep relative "Last Sync" indicator ticking smoothly every 30s
     setInterval(() => {

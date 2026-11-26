@@ -391,6 +391,31 @@ test('Unicode diacritics, watchedOnly keyword filter, and slugifyAppName parity 
     assert.equal(dbWatched.items[0].file_code, 'u2');
     assert.equal(cloudWatched.total, 1);
     assert.equal(cloudWatched.items[0].file_code, 'u2');
+
+    // Unaccented keyword watch ("Desire") must match accented uploads ("Désiré") in BOTH watchedOnly and matchWatchlistForNewFiles!
+    db.addWatch({ watch_type: 'keyword', keyword: 'Desire', platform_filter: 'iOS' });
+    const diacriticAlerts = db.matchWatchlistForNewFiles([
+      makeFile('u1_new', 'Désiré_(v1.0.43_Univ_FW_os140_ok27)-user_hidden.bfi2.ipa', { days: 0 }),
+    ]);
+    assert.equal(diacriticAlerts.length, 1);
+    assert.equal(diacriticAlerts[0].old_version, '1.0.42');
+    assert.equal(diacriticAlerts[0].new_version, '1.0.43');
+    assert.equal(db.searchFiles({ watchedOnly: true, q: 'Desire', grouped: false }).total, 1);
+
+    engine.loadStateObject(db.exportCloudState());
+    assert.equal(engine.searchFiles({ watchedOnly: true, q: 'Desire', grouped: false }).total, 1);
+
+    // Platform-scoped app watch marks only matching platform as is_watched in CloudRadarEngine too
+    engine.addWatch({ watch_type: 'app', target_slug: 'spotify-shrubify', platform_filter: 'iOS' });
+    db.saveSyncResult(
+      'user_hidden',
+      [...sample, makeFile('u4', 'Spotify-Shrubify_9.1.0_[TNT].dmg', { days: 1 })],
+      { mode: 'full', totalReported: 4 }
+    );
+    engine.loadStateObject(db.exportCloudState());
+    const flatSpot = engine.searchFiles({ q: 'Spotify-Shrubify', grouped: false }).items;
+    assert.equal(flatSpot.find((i) => i.file_code === 'u2').is_watched, true);
+    assert.equal(flatSpot.find((i) => i.file_code === 'u4').is_watched, false);
   } finally {
     db.close();
   }
@@ -474,7 +499,7 @@ test('Bidirectional watchlist.json reconciliation avoids zombie resurrection, ho
             message_id: 77,
             chat: { id: 555 },
             reply_markup: {
-              inline_keyboard: [[{ text: '🗑 Hapus: Procreate', callback_data: 'unwatch_id:1' }]],
+              inline_keyboard: [[{ text: '🗑 Remove: Procreate', callback_data: 'unwatch_id:1' }]],
             },
           },
         },
@@ -692,15 +717,48 @@ test('CloudRadarEngine.fetchRemoteState bypasses CDN cache via commit SHA on for
     githubRepo: 'alfarizigan/dailyuploads-radar',
   });
 
-  // Initial load (forceFresh=false) avoids api.github.com quota and uses branch raw URL
+  // Initial load (forceFresh=false) avoids api.github.com quota and uses branch raw URL when reachable
   const r1 = await engine.fetchRemoteState({ forceFresh: false });
   assert.equal(r1.totalFiles, 1);
   assert.ok(!requestedUrls.some((u) => u.includes('api.github.com')));
 
-  // forceFresh=true resolves exact commit SHA URL, and falls back to jsDelivr if raw.githubusercontent.com fails
+  // When raw.githubusercontent.com is blocked on initial load (forceFresh=false), dynamically resolves commit SHA
+  // BEFORE hitting jsDelivr so it never falls into jsDelivr's 7-day @radar-state branch cache!
+  requestedUrls.length = 0;
   blockRawGithub = true;
+  const rIspBlocked = await engine.fetchRemoteState({ forceFresh: false });
+  assert.ok(rIspBlocked.sourceUrl.includes(`cdn.jsdelivr.net/gh/alfarizigan/dailyuploads-radar@${sha1}`));
+  assert.ok(!requestedUrls.some((u) => u.includes('@radar-state/')));
+  assert.ok(requestedUrls.some((u) => u.includes('api.github.com') && u.includes('_=')));
+
+  // forceFresh=true resolves exact commit SHA URL, and falls back to jsDelivr if raw.githubusercontent.com fails
   const r2 = await engine.fetchRemoteState({ forceFresh: true });
   assert.ok(r2.sourceUrl.includes(`cdn.jsdelivr.net/gh/alfarizigan/dailyuploads-radar@${sha1}`));
+
+  // Cloud watchlist item notify_enabled update & lossless export
+  const seededWithCloudWatch = {
+    ...stateV1,
+    watchlist: [
+      {
+        id: 7,
+        watch_type: 'keyword',
+        keyword: 'Spotify',
+        display_name: 'Spotify',
+        platform_filter: 'iOS',
+        source_user: '',
+        notes: '',
+        notify_enabled: 1,
+        created_at: '2026-11-26T20:00:00.000Z',
+      },
+    ],
+  };
+  engine.loadStateObject(seededWithCloudWatch);
+  const updatedCloudWl = engine.updateWatch('cloud_7', { notify_enabled: false, notes: 'hold' });
+  assert.equal(updatedCloudWl.notify_enabled, 0);
+  assert.equal(updatedCloudWl.notes, 'hold');
+  const exportedJson = JSON.parse(engine.exportWatchlistJson().content);
+  assert.equal(exportedJson[0].notify_enabled, 0);
+  assert.equal(exportedJson[0].notes, 'hold');
 
   // waitForCloudSync polls until exported_at advances to stateV2
   blockRawGithub = false;

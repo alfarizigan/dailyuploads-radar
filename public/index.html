@@ -369,6 +369,10 @@
           3. To watch apps 24/7 in the cloud: send <code>/watch AppName</code> to your Telegram Bot, <b>or</b> paste an optional GitHub Personal Access Token below so clicking <b>🔔 Watch</b> or <b>🔄 Cloud Sync</b> in this Web UI updates GitHub directly!
         </div>
 
+        <div class="status-box mt-12">
+          <b>⏱️ About Cloud Auto-Sync Timing:</b> GitHub Actions runs scheduled workflows on shared best-effort runners (~15–30m intervals depending on GitHub queue load). For strict exact-minute 15m execution without runner queue jitter, you can optionally point a free scheduler like <b>cron-job.org</b> at <code>POST https://api.github.com/repos/alfarizigan/dailyuploads-radar/dispatches</code> with body <code>{"event_type":"radar-sync"}</code> and <code>Authorization: Bearer &lt;PAT&gt;</code>.
+        </div>
+
         <div class="form-group mt-12">
           <label for="setCloudGhRepo">GitHub Repository (<code>owner/repo</code>)</label>
           <input type="text" id="setCloudGhRepo" class="input" placeholder="alfarizigan/dailyuploads-radar" autocomplete="off" />

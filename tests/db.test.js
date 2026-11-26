@@ -161,13 +161,16 @@ test('RadarDB multi-version chronological alerts, stale age adjustment, platform
       { mode: 'full', totalReported: 2 }
     );
 
-    // Platform-scoped app watch picks macOS build, not iOS build
+    // Platform-scoped app watch picks macOS build, not iOS build, and only marks macOS build as is_watched
     const macWatch = db.addWatch({
       watch_type: 'app',
       target_slug: 'spotify-shrubify',
       platform_filter: 'macOS',
     });
     assert.equal(macWatch.item.last_known_version, '9.1.0');
+    const flatBeforeIosWatch = db.searchFiles({ grouped: false }).items;
+    assert.equal(flatBeforeIosWatch.find((i) => i.file_code === 'm1').is_watched, true);
+    assert.equal(flatBeforeIosWatch.find((i) => i.file_code === 's1').is_watched, false);
     const listedMac = db.listWatchlist().find((w) => w.id === macWatch.item.id);
     assert.equal(listedMac.latest_file.platform, 'macOS');
     assert.equal(listedMac.latest_file.version, '9.1.0');

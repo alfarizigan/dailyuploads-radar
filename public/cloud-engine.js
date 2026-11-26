@@ -367,6 +367,7 @@
         f._appFolded = foldSearchText(f.app_name);
         f._rawFolded = foldSearchText(f.raw_filename);
         f._haystack = `${f._appLower} ${f._rawLower} ${tagsLower.join(' ')}`;
+        f._foldedHaystack = `${f._appFolded} ${f._rawFolded} ${foldSearchText(tagsLower.join(' '))}`;
 
         const key = `${f.source_user}::${f.app_slug}`;
         vCounts.set(key, (vCounts.get(key) || 0) + 1);
@@ -399,8 +400,9 @@
         sync_logs: Array.isArray(stateObj.sync_logs) ? [...stateObj.sync_logs].reverse() : [],
       };
 
-      // Reconcile muted cloud keys & local rules that already landed in (or were deleted from) cloudWatchlist
-      const cloudKeySet = new Set(incomingCloudWl.map((w) => this._watchDedupKey(w)));
+      // Reconcile muted cloud keys, overrides, & local rules that already landed in (or were deleted from) cloudWatchlist
+      const cloudByKey = new Map(incomingCloudWl.map((w) => [this._watchDedupKey(w), w]));
+      const cloudKeySet = new Set(cloudByKey.keys());
       const muted = this.getMutedCloudKeys();
       if (muted.size > 0) {
         let changedMuted = false;
@@ -411,6 +413,29 @@
           }
         }
         if (changedMuted) this.saveMutedCloudKeys(muted);
+      }
+
+      const overrides = this.getCloudWatchOverrides();
+      const ovKeys = Object.keys(overrides);
+      if (ovKeys.length > 0) {
+        let changedOv = false;
+        for (const k of ovKeys) {
+          const cw = cloudByKey.get(k);
+          if (!cw) {
+            delete overrides[k];
+            changedOv = true;
+          } else {
+            const ov = overrides[k];
+            const sameNotify =
+              ov.notify_enabled === undefined || (cw.notify_enabled ? 1 : 0) === (ov.notify_enabled ? 1 : 0);
+            const sameNotes = ov.notes === undefined || String(cw.notes || '') === String(ov.notes);
+            if (sameNotify && sameNotes && !ov.display_name) {
+              delete overrides[k];
+              changedOv = true;
+            }
+          }
+        }
+        if (changedOv) this.saveCloudWatchOverrides(overrides);
       }
 
       const exportedMs = stateObj.exported_at ? Date.parse(stateObj.exported_at) : NaN;
@@ -440,19 +465,36 @@
       return this.state;
     }
 
-    async _resolveRadarStateCommitSha(repo, pat = '') {
+    async _fetchWithTimeout(url, options = undefined, timeoutMs = 8000) {
+      if (typeof AbortController !== 'function' || !timeoutMs || timeoutMs <= 0) {
+        return options ? this.fetchFn(url, options) : this.fetchFn(url);
+      }
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const mergedOpts = options ? { ...options, signal: ctrl.signal } : { signal: ctrl.signal };
+        return await this.fetchFn(url, mergedOpts);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async _resolveRadarStateCommitSha(repo, pat = '', timeoutMs = 5000) {
       if (!this.fetchFn || !repo) return '';
       try {
-        const apiUrl = `https://api.github.com/repos/${repo}/commits?sha=radar-state&per_page=1`;
+        // Append _=<ts> and cache: 'no-store' so api.github.com's default max-age=60 / s-maxage=60
+        // never serves a cached pre-sync SHA during waitForCloudSync polling or manual refresh
+        const apiUrl = `https://api.github.com/repos/${repo}/commits?sha=radar-state&per_page=1&_=${Date.now()}`;
         const opts = pat
           ? {
+              cache: 'no-store',
               headers: {
                 Authorization: `Bearer ${pat}`,
                 Accept: 'application/vnd.github+json',
               },
             }
-          : undefined;
-        const res = await this.fetchFn(apiUrl, opts);
+          : { cache: 'no-store' };
+        const res = await this._fetchWithTimeout(apiUrl, opts, timeoutMs);
         if (!res.ok) return '';
         const data = await res.json();
         const sha = Array.isArray(data) ? data[0]?.sha : data?.sha;
@@ -462,46 +504,94 @@
       }
     }
 
-    async fetchRemoteState({ forceFresh = false } = {}) {
+    async _tryFetchStateFromUrl(url, timeoutMs) {
+      // Intentionally send a simple CORS GET with no custom headers to avoid OPTIONS preflight on raw.githubusercontent.com / jsDelivr
+      const res = await this._fetchWithTimeout(url, undefined, timeoutMs);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      this.loadStateObject(json);
+      this.lastFetchedAt = Date.now();
+      this.lastSourceUrl = url;
+      return {
+        ok: true,
+        sourceUrl: url,
+        totalFiles: this.state.files.length,
+        exportedAt: this.state.exported_at,
+      };
+    }
+
+    async fetchRemoteState({ forceFresh = false, timeoutMs = 8000 } = {}) {
       if (!this.fetchFn) throw new Error('fetch is not available');
       const cfg = this.getCloudSettings();
       const repo = cfg.github_repo || this.githubRepo;
       const cacheKey = forceFresh ? Date.now() : Math.floor(Date.now() / 120000);
-      const urls = [];
+      const validRepo = Boolean(repo && /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo));
+      let lastErr = null;
+      let attemptedSha = false;
 
-      if (repo && /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo)) {
+      if (validRepo) {
         if (forceFresh) {
-          // Resolve exact commit SHA on radar-state to bypass 5-minute CDN branch cache completely
-          const sha = await this._resolveRadarStateCommitSha(repo, cfg.github_pat);
+          // Resolve exact commit SHA on radar-state to bypass 5-minute Fastly / 7-day jsDelivr branch caches completely
+          attemptedSha = true;
+          const sha = await this._resolveRadarStateCommitSha(repo, cfg.github_pat, Math.min(5000, timeoutMs));
           if (sha) {
-            urls.push(`https://raw.githubusercontent.com/${repo}/${sha}/cloud-state.json`);
-            urls.push(`https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`);
+            for (const shaUrl of [
+              `https://raw.githubusercontent.com/${repo}/${sha}/cloud-state.json`,
+              `https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`,
+            ]) {
+              try {
+                return await this._tryFetchStateFromUrl(shaUrl, timeoutMs);
+              } catch (err) {
+                lastErr = err;
+              }
+            }
           }
         }
-        urls.push(`https://raw.githubusercontent.com/${repo}/radar-state/cloud-state.json?v=${cacheKey}`);
-        urls.push(`https://cdn.jsdelivr.net/gh/${repo}@radar-state/cloud-state.json`);
-      }
-      urls.push(`./data/cloud-state.json?v=${cacheKey}`);
-      urls.push(`../data/cloud-state.json?v=${cacheKey}`);
 
-      let lastErr = null;
-      for (const url of urls) {
+        // Primary branch raw URL (0 GitHub API quota on normal page loads when raw.githubusercontent.com is reachable)
         try {
-          // Intentionally send a simple CORS GET with no custom headers to avoid OPTIONS preflight on raw.githubusercontent.com / jsDelivr
-          const res = await this.fetchFn(url);
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+          return await this._tryFetchStateFromUrl(
+            `https://raw.githubusercontent.com/${repo}/radar-state/cloud-state.json?v=${cacheKey}`,
+            timeoutMs
+          );
+        } catch (err) {
+          lastErr = err;
+        }
+
+        // If raw.githubusercontent.com failed/timed out (e.g. ISP block) on initial load, resolve exact commit SHA
+        // BEFORE falling back to jsDelivr so we never hit jsDelivr's 7-day @branch cache when SHA is available!
+        if (!attemptedSha) {
+          const sha = await this._resolveRadarStateCommitSha(repo, cfg.github_pat, Math.min(5000, timeoutMs));
+          if (sha) {
+            try {
+              return await this._tryFetchStateFromUrl(
+                `https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`,
+                timeoutMs
+              );
+            } catch (err) {
+              lastErr = err;
+            }
           }
-          const json = await res.json();
-          this.loadStateObject(json);
-          this.lastFetchedAt = Date.now();
-          this.lastSourceUrl = url;
-          return {
-            ok: true,
-            sourceUrl: url,
-            totalFiles: this.state.files.length,
-            exportedAt: this.state.exported_at,
-          };
+        }
+
+        try {
+          return await this._tryFetchStateFromUrl(
+            `https://cdn.jsdelivr.net/gh/${repo}@radar-state/cloud-state.json`,
+            timeoutMs
+          );
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+
+      for (const localUrl of [
+        `./data/cloud-state.json?v=${cacheKey}`,
+        `../data/cloud-state.json?v=${cacheKey}`,
+      ]) {
+        try {
+          return await this._tryFetchStateFromUrl(localUrl, timeoutMs);
         } catch (err) {
           lastErr = err;
         }
@@ -539,14 +629,32 @@
       return `${type}::${target}::${w.platform_filter || ''}`;
     }
 
+    getCloudWatchOverrides() {
+      const obj = this._readJson('du_cloud_watch_overrides_v1', {});
+      return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+    }
+
+    saveCloudWatchOverrides(obj) {
+      this._writeJson('du_cloud_watch_overrides_v1', obj);
+    }
+
     getCombinedWatchRules() {
       const muted = this.getMutedCloudKeys();
+      const overrides = this.getCloudWatchOverrides();
       const map = new Map();
 
       for (const cw of this.state.cloudWatchlist) {
         const key = this._watchDedupKey(cw);
         if (muted.has(key)) continue;
-        map.set(key, { ...cw, id: `cloud_${cw.id}`, scope: 'cloud' });
+        const ov = overrides[key] || {};
+        map.set(key, {
+          ...cw,
+          ...(ov.notify_enabled !== undefined ? { notify_enabled: ov.notify_enabled ? 1 : 0 } : {}),
+          ...(ov.notes !== undefined ? { notes: String(ov.notes) } : {}),
+          ...(ov.display_name ? { display_name: String(ov.display_name) } : {}),
+          id: `cloud_${cw.id}`,
+          scope: 'cloud',
+        });
       }
 
       for (const lw of this.getLocalWatchlist()) {
@@ -561,12 +669,24 @@
       );
     }
 
+    getAppWatchRules() {
+      return this.getCombinedWatchRules().filter((w) => w.watch_type === 'app' && w.target_slug);
+    }
+
+    isFileWatched(f, appWatches = null) {
+      const rules = appWatches || this.getAppWatchRules();
+      return rules.some(
+        (w) =>
+          w.target_slug === f.app_slug &&
+          (!w.platform_filter || w.platform_filter === f.platform) &&
+          (!w.source_user || w.source_user === f.source_user)
+      );
+    }
+
     getWatchedSlugSet() {
       const set = new Set();
-      for (const w of this.getCombinedWatchRules()) {
-        if (w.watch_type === 'app' && w.target_slug) {
-          set.add(w.target_slug);
-        }
+      for (const w of this.getAppWatchRules()) {
+        set.add(w.target_slug);
       }
       return set;
     }
@@ -665,12 +785,12 @@
       if (w.watch_type === 'app') {
         return Boolean(w.target_slug) && f.app_slug === w.target_slug;
       }
-      const terms = String(w.keyword || '')
-        .toLowerCase()
+      const terms = foldSearchText(w.keyword || '')
         .split(/\s+/)
         .filter(Boolean);
       if (terms.length === 0) return false;
-      return terms.every((t) => f._haystack.includes(t));
+      const hay = f._foldedHaystack || foldSearchText(f._haystack || '');
+      return terms.every((t) => hay.includes(t));
     }
 
     _filterFiles(params = {}) {
@@ -748,7 +868,7 @@
       });
     }
 
-    _toPublicItem(f, watchedSlugs, extra = {}) {
+    _toPublicItem(f, appWatches, extra = {}) {
       const key = `${f.source_user}::${f.app_slug}`;
       return {
         file_code: f.file_code,
@@ -772,7 +892,7 @@
         first_seen_at: f.first_seen_at,
         last_seen_at: f.last_seen_at,
         is_active: 1,
-        is_watched: watchedSlugs.has(f.app_slug),
+        is_watched: this.isFileWatched(f, appWatches),
         version_count: this.versionCountBySourceSlug.get(key) || 1,
         ...extra,
       };
@@ -786,9 +906,9 @@
       const grouped =
         params.grouped === true || params.grouped === 'true' || params.grouped === '1';
       const sort = String(params.sort || 'newest');
-      const watchedSlugs = this.getWatchedSlugSet();
+      const appWatches = this.getAppWatchRules();
 
-      const filtered = this._filterFiles(params, watchedSlugs);
+      const filtered = this._filterFiles(params);
 
       const compareItems = (a, b, isGrouped) => {
         if (sort === 'oldest') {
@@ -828,7 +948,7 @@
 
       if (!grouped) {
         const items = filtered
-          .map((f) => this._toPublicItem(f, watchedSlugs))
+          .map((f) => this._toPublicItem(f, appWatches))
           .sort((a, b) => compareItems(a, b, false));
         const total = items.length;
         return {
@@ -865,7 +985,7 @@
 
       const groupedItems = [...groupMap.values()]
         .map((g) =>
-          this._toPublicItem(g.rep, watchedSlugs, {
+          this._toPublicItem(g.rep, appWatches, {
             total_downloads: g.total_downloads,
             max_downloads: g.max_downloads,
           })
@@ -884,11 +1004,11 @@
     }
 
     getAppVersions(appSlug, sourceUser = '') {
-      const watchedSlugs = this.getWatchedSlugSet();
+      const appWatches = this.getAppWatchRules();
       return this.state.files
         .filter((f) => f.app_slug === appSlug && (!sourceUser || f.source_user === sourceUser))
         .sort((a, b) => a.list_order - b.list_order)
-        .map((f) => this._toPublicItem(f, watchedSlugs));
+        .map((f) => this._toPublicItem(f, appWatches));
     }
 
     getFacets(sourceUser = 'all') {
@@ -1129,7 +1249,7 @@
         last_known_version: latest?.version || '',
         last_known_file_code: latest?.file_code || '',
         notes,
-        notify_enabled: 1,
+        notify_enabled: body.notify_enabled !== undefined ? (body.notify_enabled ? 1 : 0) : 1,
         created_at: new Date().toISOString(),
         scope: 'browser',
       };
@@ -1142,6 +1262,26 @@
 
     updateWatch(id, patch = {}) {
       const strId = String(id);
+      if (strId.startsWith('cloud_')) {
+        const rawCloudId = strId.slice('cloud_'.length);
+        const cw = this.state.cloudWatchlist.find((w) => String(w.id) === rawCloudId);
+        if (cw) {
+          const key = this._watchDedupKey(cw);
+          const overrides = this.getCloudWatchOverrides();
+          const curOv = overrides[key] || {};
+          overrides[key] = {
+            ...curOv,
+            ...(patch.notify_enabled !== undefined ? { notify_enabled: patch.notify_enabled ? 1 : 0 } : {}),
+            ...(patch.notes !== undefined ? { notes: String(patch.notes) } : {}),
+            ...(patch.display_name !== undefined && String(patch.display_name).trim()
+              ? { display_name: String(patch.display_name).trim() }
+              : {}),
+          };
+          this.saveCloudWatchOverrides(overrides);
+          return this.getCombinedWatchRules().find((w) => String(w.id) === strId) || null;
+        }
+      }
+
       const local = this.getLocalWatchlist();
       const idx = local.findIndex((w) => String(w.id) === strId);
       if (idx !== -1) {
@@ -1170,9 +1310,15 @@
         const rawCloudId = strId.slice('cloud_'.length);
         const cw = this.state.cloudWatchlist.find((w) => String(w.id) === rawCloudId);
         if (cw) {
+          const key = this._watchDedupKey(cw);
           const muted = this.getMutedCloudKeys();
-          muted.add(this._watchDedupKey(cw));
+          muted.add(key);
           this.saveMutedCloudKeys(muted);
+          const overrides = this.getCloudWatchOverrides();
+          if (overrides[key]) {
+            delete overrides[key];
+            this.saveCloudWatchOverrides(overrides);
+          }
           return true;
         }
       }
@@ -1230,6 +1376,7 @@
         platform_filter: w.platform_filter || '',
         source_user: w.source_user || '',
         notes: w.notes || '',
+        notify_enabled: w.notify_enabled ? 1 : 0,
       }));
       return {
         filename: 'dailyuploads-watchlist.json',
