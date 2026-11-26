@@ -53,7 +53,11 @@ To receive **automatic 24/7 mobile push alerts** when watched apps get updated:
      ]
      ```
 
-> **Note on GitHub Actions `schedule` Timing:** GitHub's free public runner scheduler executes cron jobs on a best-effort basis (typically every 15–30 minutes depending on GitHub platform load, and pauses after 60 days without repository activity). For strict down-to-the-minute 15m execution, you can optionally point a free external scheduler (such as [cron-job.org](https://cron-job.org)) at the GitHub REST API `dispatches` endpoint (`POST /repos/<owner>/<repo>/dispatches` with `{"event_type":"radar-sync"}`).
+> **Note on GitHub Actions `schedule` Timing & Free Quotas:**
+> - **100% Free & Lightweight:** Public repositories receive **unlimited free GitHub Actions minutes** (0 billed quota). Each 15-minute Quick Sync checks only page 1 (~2s), overwrites a single parentless commit on `radar-state` (~138 KB, zero git history bloat), and skips `gh-pages` deployment unless files or watchlist rules actually changed.
+> - **Exact 15-Minute Sync Trigger:** GitHub's shared public `schedule` runner executes on a best-effort queue. For strict 15-minute intervals:
+>   - **On Windows PC (Silent Background Pinger):** Run `npm run scheduler:install` (uses Git Credential Manager with zero stored plaintext tokens, and automatically skips dispatching if GitHub already synced within the last ~14 minutes). Check with `npm run scheduler:status` or remove anytime via `npm run scheduler:remove`.
+>   - **24/7 Cloud External Pinger (PC Off):** Point a free scheduler such as [cron-job.org](https://cron-job.org) (every 15m) at `POST https://api.github.com/repos/alfarizigan/dailyuploads-radar/dispatches` with headers `Accept: application/vnd.github+json`, `Authorization: Bearer <PAT>`, and JSON body `{"event_type":"radar-sync"}` (~4 requests/hour out of GitHub's 5,000 requests/hour token rate limit).
 
 ---
 

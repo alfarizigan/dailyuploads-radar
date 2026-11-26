@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const { RadarDB } = require('../src/db');
 const { TelegramBotRunner } = require('../src/telegram');
 const { runCloudSync } = require('../src/cloud-sync');
+const { pingCloudSync, appendBoundedLog } = require('../src/cloud-pinger');
 const { parseFilename, parseSizeToBytes, buildDownloadUrl } = require('../src/parser');
 const { CloudRadarEngine, detectGithubRepoFromLocation } = require('../public/cloud-engine');
 
@@ -778,4 +779,174 @@ test('CloudRadarEngine.fetchRemoteState bypasses CDN cache via commit SHA on for
   assert.ok(pollTicks >= 1);
   assert.equal(engine.state.files.length, 2);
   assert.equal(engine.state.exported_at, '2026-11-26T21:30:00.000Z');
+});
+
+test('pingCloudSync deduplicates active/recent runs, backs off on failures, falls back to workflow_dispatch, and bounds logs', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-pinger-'));
+  const logPath = path.join(tmpDir, 'cloud-pinger.log');
+  const nowMs = Date.parse('2026-11-26T23:30:00.000Z');
+
+  try {
+    // 1. Rejects malformed repo slug
+    await assert.rejects(
+      () => pingCloudSync({ repo: 'bad slug/../x', token: 'tok', logPath }),
+      /Invalid GitHub repository slug/
+    );
+
+    // 2. Gracefully skips when token is empty
+    const noTok = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: '',
+      logPath,
+    });
+    assert.equal(noTok.ok, false);
+    assert.equal(noTok.dispatched, false);
+    assert.equal(noTok.reason, 'missing_token');
+
+    // 3. Skips when a run is already queued / in_progress
+    let runsPayload = [
+      { id: 10, status: 'in_progress', conclusion: null, created_at: '2026-11-26T23:29:00.000Z' },
+    ];
+    let repoDispatchStatus = 204;
+    let wfDispatchStatus = 204;
+    const calls = [];
+
+    const mockFetch = async (url, opts = {}) => {
+      calls.push({ url, method: opts.method || 'GET', body: opts.body });
+      if (url.includes('/actions/workflows/radar-sync.yml/runs')) {
+        return { ok: true, status: 200, json: async () => ({ workflow_runs: runsPayload }) };
+      }
+      if (url.endsWith('/dispatches') && !url.includes('/actions/workflows/')) {
+        return {
+          ok: repoDispatchStatus >= 200 && repoDispatchStatus < 300,
+          status: repoDispatchStatus,
+          json: async () => ({ message: `HTTP ${repoDispatchStatus}` }),
+        };
+      }
+      if (url.includes('/actions/workflows/radar-sync.yml/dispatches')) {
+        return {
+          ok: wfDispatchStatus >= 200 && wfDispatchStatus < 300,
+          status: wfDispatchStatus,
+          json: async () => ({ message: `HTTP ${wfDispatchStatus}` }),
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const rActive = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rActive.dispatched, false);
+    assert.equal(rActive.reason, 'already_running');
+
+    // 4. Skips when latest successful run finished 4 minutes ago (< 13.5m threshold)
+    runsPayload = [
+      {
+        id: 11,
+        status: 'completed',
+        conclusion: 'success',
+        updated_at: '2026-11-26T23:26:00.000Z',
+      },
+    ];
+    const rRecent = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rRecent.dispatched, false);
+    assert.equal(rRecent.reason, 'recent_success');
+    assert.equal(rRecent.ageMinutes, 4);
+
+    // 5. Backs off when latest run failed 3 minutes ago (< 10m backoff) while previous success was 20m ago
+    runsPayload = [
+      {
+        id: 12,
+        status: 'completed',
+        conclusion: 'failure',
+        updated_at: '2026-11-26T23:27:00.000Z',
+      },
+      {
+        id: 11,
+        status: 'completed',
+        conclusion: 'success',
+        updated_at: '2026-11-26T23:10:00.000Z',
+      },
+    ];
+    const rBackoff = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rBackoff.dispatched, false);
+    assert.equal(rBackoff.reason, 'recent_failure_backoff');
+
+    // 6. Dispatches repository_dispatch when last success was 16m ago (>= 13.5m)
+    runsPayload = [
+      {
+        id: 11,
+        status: 'completed',
+        conclusion: 'success',
+        updated_at: '2026-11-26T23:14:00.000Z',
+      },
+    ];
+    const rDisp = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rDisp.ok, true);
+    assert.equal(rDisp.dispatched, true);
+    assert.equal(rDisp.method, 'repository_dispatch');
+
+    // 7. Automatically falls back to workflow_dispatch if repository_dispatch returns 403 (e.g. Actions-only fine-grained PAT)
+    repoDispatchStatus = 403;
+    wfDispatchStatus = 204;
+    const rFallback = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      force: true,
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rFallback.ok, true);
+    assert.equal(rFallback.dispatched, true);
+    assert.equal(rFallback.method, 'workflow_dispatch');
+
+    // 8. Throws on 401 Bad credentials
+    repoDispatchStatus = 401;
+    await assert.rejects(
+      () =>
+        pingCloudSync({
+          repo: 'alfarizigan/dailyuploads-radar',
+          token: 'ghp_secret_never_logged',
+          force: true,
+          nowMs,
+          fetchFn: mockFetch,
+          logPath,
+        }),
+      /GitHub repository_dispatch failed/
+    );
+
+    // 9. Bounded log rotation <= 200 lines & zero token leakage
+    for (let i = 0; i < 250; i += 1) {
+      appendBoundedLog(logPath, `entry ${i}`);
+    }
+    const rawLog = fs.readFileSync(logPath, 'utf8');
+    const lines = rawLog.trim().split(/\r?\n/);
+    assert.equal(lines.length, 200);
+    assert.ok(!rawLog.includes('ghp_secret_never_logged'), 'Log must never contain auth token');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

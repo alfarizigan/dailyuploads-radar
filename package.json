@@ -7,6 +7,10 @@
     "start": "node src/server.js",
     "sync:cloud": "node --no-warnings src/cloud-sync.js",
     "export:cloud": "node --no-warnings src/cloud-sync.js --export-from-sqlite",
+    "ping:cloud": "node --no-warnings src/cloud-pinger.js",
+    "scheduler:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-cloud-scheduler.ps1 -Action install",
+    "scheduler:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-cloud-scheduler.ps1 -Action status",
+    "scheduler:remove": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-cloud-scheduler.ps1 -Action remove",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

@@ -5,6 +5,7 @@ node_modules/
 data/radar.sqlite
 data/radar.sqlite-shm
 data/radar.sqlite-wal
+data/cloud-pinger.log
 *.tmp.*
 .DS_Store
 Thumbs.db

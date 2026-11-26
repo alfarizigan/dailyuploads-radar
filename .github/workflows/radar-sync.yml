@@ -113,7 +113,7 @@ jobs:
       - name: Deploy Cloud Web UI & Catalog to GitHub Pages (gh-pages)
         if: >-
           steps.sync.outcome == 'success' &&
-          ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') ||
+          (github.event_name == 'push' ||
            steps.sync.outputs.pages_needs_deploy == 'true' ||
            steps.check_pages.outputs.exists == 'false')
         run: |
@@ -132,10 +132,13 @@ jobs:
           rm -rf "$STAGE" /tmp/ghpages.idx
 
       - name: Keep scheduled workflow active across 60-day main-branch inactivity
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'repository_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ] && [ "$(date -u +%H)" != "00" ]; then
+            exit 0
+          fi
           curl -fsSL -X PUT \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
