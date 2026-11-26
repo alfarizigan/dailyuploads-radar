@@ -28,11 +28,16 @@ test('parseSizeToBytes and formatBytes handle B, KB, MB, GB accurately', () => {
   assert.equal(formatBytes(1024 * 1024 * 10), '10.0 MB');
 });
 
-test('parseOsToken parses osNNN and iosNN+ tokens', () => {
+test('parseOsToken parses osNNN, 2-digit osNN, and iosNN+ tokens', () => {
   assert.equal(parseOsToken('os150'), 15.0);
   assert.equal(parseOsToken('os161'), 16.1);
   assert.equal(parseOsToken('os144'), 14.4);
   assert.equal(parseOsToken('os90'), 9.0);
+  assert.equal(parseOsToken('os80'), 8.0);
+  assert.equal(parseOsToken('os13'), 13.0);
+  assert.equal(parseOsToken('os15'), 15.0);
+  assert.equal(parseOsToken('os17'), 17.0);
+  assert.equal(parseOsToken('os18'), 18.0);
   assert.equal(parseOsToken('os1510'), 15.1);
   assert.equal(parseOsToken('os1500'), 15.0);
   assert.equal(parseOsToken('ios17+'), 17.0);
@@ -145,6 +150,32 @@ test('parseFilename handles macOS DMG/PKG and community unsigned IPAs', () => {
   assert.equal(zgta.app_name, 'ZGTA-V');
   assert.equal(zgta.version, '2.0.0b4');
   assert.ok(zgta.tags.includes('TrollStore'));
+
+  // Split multi-part archives, 2-digit os15, duplicate extension typos, short build & git commit hashes
+  const logos = parseFilename('Logos.Bible.Software.v7.4.0.51.Incl.Libros.zip.004');
+  assert.equal(logos.app_name, 'Logos Bible Software');
+  assert.equal(logos.app_slug, 'logos-bible-software');
+  assert.equal(logos.version, '7.4.0.51');
+  assert.equal(logos.extension, 'zip');
+  assert.equal(logos.platform, 'Archive');
+  assert.ok(logos.tags.includes('Part 004'));
+
+  const neko = parseFilename('Neko_Atsume_Kitty_Collector+_(v1.64.0_64bit_os15_ok27)-user_hidden.bfi3.ipa');
+  assert.equal(neko.min_ios, 15.0);
+  assert.equal(neko.min_ios_label, 'iOS 15.0');
+
+  const husk = parseFilename('Husk_3.2.1ipa.ipa');
+  assert.equal(husk.app_name, 'Husk');
+  assert.equal(husk.version, '3.2.1');
+
+  const termx1 = parseFilename('TermX.ipa');
+  const termx2 = parseFilename('TermX-e543723.ipa');
+  assert.equal(termx1.app_slug, termx2.app_slug);
+  assert.equal(termx2.version, 'e543723');
+
+  const audioB1 = parseFilename('AudioYam_b1.ipa');
+  assert.equal(audioB1.app_name, 'AudioYam');
+  assert.equal(audioB1.version, 'Build 1');
 });
 
 test('compareVersions accurately orders semantic and build versions', () => {

@@ -34,8 +34,8 @@ async function startServer(options = {}) {
   const actualPort = typeof addr === 'object' && addr ? addr.port : port;
   const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${actualPort}`;
 
-  console.log(`\n🛰️  DailyUploads Radar berjalan di ${url}`);
-  console.log(`📦 Source default: https://dailyuploads.net/users/${config.defaultSourceUser}`);
+  console.log(`\n🛰️  DailyUploads Radar running at ${url}`);
+  console.log(`📦 Default source: https://dailyuploads.net/users/${config.defaultSourceUser}`);
   console.log(`💾 Database: ${dbPath}\n`);
 
   syncManager.startScheduler();
@@ -49,10 +49,10 @@ async function startServer(options = {}) {
         for (const r of results) {
           if (r.ok) {
             console.log(
-              `[Sync] ${r.sourceUser} (${r.mode}): ${r.totalFetched} file diproses, ${r.newFilesCount} baru, ${r.alertsTriggered} alert (${(r.durationMs / 1000).toFixed(1)}s)`
+              `[Sync] ${r.sourceUser} (${r.mode}): ${r.totalFetched} files processed, +${r.newFilesCount} new, ${r.alertsTriggered} alerts (${(r.durationMs / 1000).toFixed(1)}s)`
             );
           } else {
-            console.error(`[Sync] ${r.sourceUser} gagal:`, r.error);
+            console.error(`[Sync] ${r.sourceUser} failed:`, r.error);
           }
         }
       })
@@ -80,14 +80,14 @@ if (require.main === module) {
   startServer()
     .then(({ shutdown }) => {
       const handleSignal = () => {
-        console.log('\nMematikan DailyUploads Radar...');
+        console.log('\nShutting down DailyUploads Radar...');
         shutdown().finally(() => process.exit(0));
       };
       process.on('SIGINT', handleSignal);
       process.on('SIGTERM', handleSignal);
     })
     .catch((err) => {
-      console.error('Gagal menjalankan server:', err);
+      console.error('Failed to start server:', err);
       process.exit(1);
     });
 }

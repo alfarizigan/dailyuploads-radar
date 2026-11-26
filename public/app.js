@@ -1,107 +1,50 @@
 (() => {
   'use strict';
 
-  const I18N = {
-    id: {
-      tab_catalog: 'Katalog',
-      tab_watchlist: 'Watchlist',
-      tab_alerts: 'Notifikasi',
-      tab_insights: 'Insights',
-      tab_settings: 'Pengaturan',
-      btn_quick_sync: 'Quick Sync',
-      btn_full_sync: 'Full',
-      kpi_files: 'Total File',
-      kpi_apps: 'Aplikasi Unik',
-      kpi_today: 'Upload Hari Ini',
-      kpi_watched: 'Dipantau',
-      kpi_last_sync: 'Sync Terakhir',
-      btn_watch_keyword: 'Pantau Keyword',
-      quick_tags: 'Cepat:',
-      f_sort: 'Urutkan',
-      f_ext: 'Format',
-      f_ios: 'Min iOS',
-      f_age: 'Waktu Upload',
-      f_size: 'Ukuran',
-      f_tag: 'Tag',
-      opt_group: 'Gabung per Aplikasi',
-      opt_watched: 'Hanya Watchlist ⭐',
-      btn_reset: 'Reset',
-      wl_title: '⭐ Watchlist & Pantauan Update',
-      wl_desc: 'Tandai aplikasi atau buat aturan keyword. Setiap ada upload baru yang cocok, Radar akan memberi notifikasi otomatis!',
-      btn_add_rule: 'Tambah Pantauan',
-      al_title: '🔔 Pusat Notifikasi Update',
-      al_desc: 'Daftar aplikasi yang terdeteksi mendapat versi/upload terbaru sejak kamu memantaunya.',
-      search_placeholder: 'Cari aplikasi, versi, tag, filename... (tekan / untuk fokus)',
-      sort_newest: 'Terbaru',
-      sort_oldest: 'Terlama',
-      sort_downloads: 'Download Terbanyak',
-      sort_name_asc: 'Nama A → Z',
-      sort_name_desc: 'Nama Z → A',
-      sort_size_desc: 'Ukuran Terbesar',
-      sort_size_asc: 'Ukuran Terkecil',
-      ios_all: 'Semua iOS',
-      age_all: 'Semua waktu',
-      age_0: 'Hari ini (0d)',
-      age_3: '≤ 3 hari',
-      age_7: '≤ 7 hari',
-      age_30: '≤ 30 hari',
-      size_all: 'Semua ukuran',
-    },
-    en: {
-      tab_catalog: 'Catalog',
-      tab_watchlist: 'Watchlist',
-      tab_alerts: 'Alerts',
-      tab_insights: 'Insights',
-      tab_settings: 'Settings',
-      btn_quick_sync: 'Quick Sync',
-      btn_full_sync: 'Full',
-      kpi_files: 'Total Files',
-      kpi_apps: 'Unique Apps',
-      kpi_today: 'Uploaded Today',
-      kpi_watched: 'Watched',
-      kpi_last_sync: 'Last Sync',
-      btn_watch_keyword: 'Watch Keyword',
-      quick_tags: 'Quick:',
-      f_sort: 'Sort by',
-      f_ext: 'Format',
-      f_ios: 'Min iOS',
-      f_age: 'Upload Age',
-      f_size: 'Size',
-      f_tag: 'Tag',
-      opt_group: 'Group by App',
-      opt_watched: 'Watched Only ⭐',
-      btn_reset: 'Reset',
-      wl_title: '⭐ Watchlist & Update Rules',
-      wl_desc: 'Bookmark apps or create keyword rules. Whenever a matching upload appears, Radar alerts you automatically!',
-      btn_add_rule: 'Add Watch Rule',
-      al_title: '🔔 Update Notifications',
-      al_desc: 'Detected new versions and uploads matching your watched apps and keywords.',
-      search_placeholder: 'Search apps, versions, tags, filenames... (press / to focus)',
-      sort_newest: 'Newest',
-      sort_oldest: 'Oldest',
-      sort_downloads: 'Most Downloaded',
-      sort_name_asc: 'Name A → Z',
-      sort_name_desc: 'Name Z → A',
-      sort_size_desc: 'Largest Size',
-      sort_size_asc: 'Smallest Size',
-      ios_all: 'All iOS',
-      age_all: 'Any time',
-      age_0: 'Today (0d)',
-      age_3: '≤ 3 days',
-      age_7: '≤ 7 days',
-      age_30: '≤ 30 days',
-      size_all: 'Any size',
-    },
-  };
-
   const HIGHLIGHT_TAGS = new Set(['VIP', 'Pro', 'Premium', 'Subscribed', 'Unlocked', 'Incl. DLC']);
   const MOD_TAGS = new Set(['Unsigned', 'TNT', 'MacKed', 'U2B', 'TrollStore', 'Creator Ed', 'Modded']);
+  const VALID_TABS = new Set(['catalog', 'watchlist', 'alerts', 'insights', 'settings']);
+  const VALID_SORTS = new Set([
+    'newest',
+    'oldest',
+    'downloads',
+    'name_asc',
+    'name_desc',
+    'size_desc',
+    'size_asc',
+  ]);
+
+  function safeStorageGet(key, fallback) {
+    try {
+      return localStorage.getItem(key) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function safeStorageSet(key, val) {
+    try {
+      localStorage.setItem(key, val);
+    } catch {
+      // Ignore private-mode storage restrictions
+    }
+  }
+
+  function safeStorageRemove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Clean up legacy language preference key so UI is uniformly English
+  safeStorageRemove('du_lang');
 
   const state = {
     tab: 'catalog',
-    viewMode: localStorage.getItem('du_view_mode') || 'grid',
-    theme: localStorage.getItem('du_theme') || 'dark',
-    lang: localStorage.getItem('du_lang') || 'id',
+    viewMode: safeStorageGet('du_view_mode', 'grid'),
+    theme: safeStorageGet('du_theme', 'dark'),
     q: '',
     source: 'all',
     platform: 'all',
@@ -151,27 +94,128 @@
       .replace(/'/g, '&#39;');
   }
 
+  function formatBytesHuman(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let idx = 0;
+    let val = bytes;
+    while (val >= 1024 && idx < units.length - 1) {
+      val /= 1024;
+      idx += 1;
+    }
+    return `${idx === 0 ? Math.round(val) : val.toFixed(1)} ${units[idx]}`;
+  }
+
   function formatRelativeTime(iso) {
-    const en = state.lang === 'en';
-    if (!iso) return en ? 'Never' : 'Belum pernah';
+    if (!iso) return 'Never';
     const ms = Date.now() - Date.parse(iso);
     if (!Number.isFinite(ms)) return iso;
     const sec = Math.max(0, Math.floor(ms / 1000));
-    if (sec < 60) return en ? `${sec}s ago` : `${sec}d lalu`;
+    if (sec < 60) return `${sec}s ago`;
     const min = Math.floor(sec / 60);
-    if (min < 60) return en ? `${min}m ago` : `${min}m lalu`;
+    if (min < 60) return `${min}m ago`;
     const hr = Math.floor(min / 60);
-    if (hr < 24) return en ? `${hr}h ago` : `${hr}j lalu`;
+    if (hr < 24) {
+      const remMin = min % 60;
+      return hr < 6 && remMin > 0 ? `${hr}h ${remMin}m ago` : `${hr}h ago`;
+    }
     const d = Math.floor(hr / 24);
-    return en ? `${d}d ago` : `${d}h lalu`;
+    return `${d}d ago`;
+  }
+
+  function formatClockTime(iso) {
+    if (!iso) return '';
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
   function formatAge(days) {
     if (days === null || days === undefined) return '—';
-    if (days === 0) return state.lang === 'en' ? 'Today' : 'Hari ini';
-    if (days === 1) return state.lang === 'en' ? '1d ago' : '1 hari lalu';
-    return state.lang === 'en' ? `${days}d ago` : `${days} hari lalu`;
+    if (days === 0) return 'Today';
+    if (days === 1) return '1d ago';
+    return `${days}d ago`;
   }
+
+  /* ── URL State Deep-Linking ───────────────────────────── */
+
+  function hydrateStateFromUrl() {
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      const tab = qs.get('tab');
+      if (tab && VALID_TABS.has(tab)) state.tab = tab;
+      if (qs.has('q')) state.q = qs.get('q').trim();
+      if (qs.get('source')) state.source = qs.get('source');
+      if (qs.get('platform')) state.platform = qs.get('platform');
+      if (qs.get('ext')) state.extension = qs.get('ext');
+      if (qs.get('tag')) state.tag = qs.get('tag');
+      if (qs.get('ios')) state.maxIos = qs.get('ios');
+      if (qs.get('days')) state.maxDays = qs.get('days');
+      if (qs.get('size')) state.sizeRange = qs.get('size');
+      if (qs.get('watched') === '1' || qs.get('watched') === 'true') state.watchedOnly = true;
+      if (qs.get('grouped') === '0' || qs.get('grouped') === 'false') state.grouped = false;
+      const sort = qs.get('sort');
+      if (sort && VALID_SORTS.has(sort)) state.sort = sort;
+      const p = Number.parseInt(qs.get('page'), 10);
+      if (Number.isFinite(p) && p > 1) state.page = p;
+    } catch {
+      // Ignore malformed URL params
+    }
+  }
+
+  function syncDomControlsFromState() {
+    if ($('searchInput')) $('searchInput').value = state.q;
+    if ($('btnClearSearch')) $('btnClearSearch').classList.toggle('hidden', !state.q);
+    if ($('btnWatchQuery')) $('btnWatchQuery').classList.toggle('hidden', !state.q);
+    if ($('searchKbdHint')) $('searchKbdHint').classList.toggle('hidden', Boolean(state.q));
+    if ($('filterSort')) $('filterSort').value = state.sort;
+    if ($('filterMaxIos')) $('filterMaxIos').value = state.maxIos;
+    if ($('filterMaxDays')) $('filterMaxDays').value = state.maxDays;
+    if ($('filterSize')) $('filterSize').value = state.sizeRange;
+    if ($('toggleGrouped')) $('toggleGrouped').checked = state.grouped;
+    if ($('toggleWatchedOnly')) $('toggleWatchedOnly').checked = state.watchedOnly;
+
+    document.querySelectorAll('.nav-tab').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tab === state.tab);
+    });
+    document.querySelectorAll('.tab-panel').forEach((p) => {
+      p.classList.toggle('active', p.id === `tab-${state.tab}`);
+    });
+  }
+
+  function buildShareableUrlParams() {
+    const qs = new URLSearchParams();
+    if (state.tab !== 'catalog') qs.set('tab', state.tab);
+    if (state.q) qs.set('q', state.q);
+    if (state.source !== 'all') qs.set('source', state.source);
+    if (state.platform !== 'all') qs.set('platform', state.platform);
+    if (state.extension !== 'all') qs.set('ext', state.extension);
+    if (state.tag !== 'all') qs.set('tag', state.tag);
+    if (state.maxIos !== 'all') qs.set('ios', state.maxIos);
+    if (state.maxDays !== 'all') qs.set('days', state.maxDays);
+    if (state.sizeRange !== 'all') qs.set('size', state.sizeRange);
+    if (state.watchedOnly) qs.set('watched', '1');
+    if (!state.grouped) qs.set('grouped', '0');
+    if (state.sort !== 'newest') qs.set('sort', state.sort);
+    if (state.page > 1) qs.set('page', String(state.page));
+    return qs;
+  }
+
+  function syncUrlFromState() {
+    try {
+      if (window.location.protocol === 'file:') return;
+      const qs = buildShareableUrlParams().toString();
+      const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash || ''}`;
+      const curUrl = `${window.location.pathname}${window.location.search}${window.location.hash || ''}`;
+      if (nextUrl !== curUrl) {
+        window.history.replaceState(null, '', nextUrl);
+      }
+    } catch {
+      // Ignore history API errors in restricted contexts
+    }
+  }
+
+  /* ── Cloud / Local API Adapter ────────────────────────── */
 
   async function cloudApi(path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
@@ -222,7 +266,7 @@
           await cloudEngine.syncWatchlistToGithub();
           res.syncedToCloud = true;
         } catch (err) {
-          toast(`GitHub sync gagal: ${err.message}`, 'warn');
+          toast(`GitHub sync failed: ${err.message}`, 'warn');
         }
       }
       return res;
@@ -233,7 +277,7 @@
       if (cloudEngine.getCloudSettings().github_pat) {
         await cloudEngine
           .syncWatchlistToGithub()
-          .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
+          .catch((err) => toast(`GitHub sync failed: ${err.message}`, 'warn'));
       }
       return { ok: true, ...res };
     }
@@ -243,7 +287,7 @@
       if (cloudEngine.getCloudSettings().github_pat) {
         await cloudEngine
           .syncWatchlistToGithub()
-          .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
+          .catch((err) => toast(`GitHub sync failed: ${err.message}`, 'warn'));
       }
       return { ok: true, removed };
     }
@@ -258,7 +302,7 @@
         if (cloudEngine.getCloudSettings().github_pat) {
           await cloudEngine
             .syncWatchlistToGithub()
-            .catch((err) => toast(`GitHub sync gagal: ${err.message}`, 'warn'));
+            .catch((err) => toast(`GitHub sync failed: ${err.message}`, 'warn'));
         }
         return { ok: true };
       }
@@ -310,12 +354,12 @@
       if (body.channel === 'webhook') {
         return cloudEngine.sendWebhookBrowserTest(body.webhook_url);
       }
-      throw new Error('Windows Toast hanya tersedia pada server lokal Windows.');
+      throw new Error('Windows Toast is only available when running the local Windows server.');
     }
     if (method === 'POST' && pathname === '/api/sources') {
-      throw new Error('Di Mode Cloud, tambahkan variable EXTRA_SOURCES di GitHub Actions Settings → Variables.');
+      throw new Error('In Cloud Mode, configure additional sources via GitHub Repository Variables → EXTRA_SOURCES.');
     }
-    throw new Error(`Endpoint ${pathname} hanya tersedia di server lokal.`);
+    throw new Error(`Endpoint ${pathname} is only available on the local server.`);
   }
 
   async function api(path, options = {}) {
@@ -349,45 +393,46 @@
       el.style.opacity = '0';
       el.style.transition = 'opacity 0.25s';
       setTimeout(() => el.remove(), 260);
-    }, 3600);
+    }, 3800);
   }
 
   function applyTheme() {
     document.documentElement.setAttribute('data-theme', state.theme);
     $('btnTheme').textContent = state.theme === 'dark' ? '☀️' : '🌙';
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', state.theme === 'dark' ? '#0b0f19' : '#f1f5f9');
+    }
   }
 
-  function applyLang() {
-    const dict = I18N[state.lang] || I18N.id;
-    document.querySelectorAll('[data-i18n]').forEach((el) => {
-      const k = el.getAttribute('data-i18n');
-      if (dict[k]) el.textContent = dict[k];
-    });
-    const searchInput = $('searchInput');
-    if (searchInput && dict.search_placeholder) searchInput.placeholder = dict.search_placeholder;
+  function updateSyncButtonsUI() {
+    const qLabel = $('btnQuickSyncLabel');
+    const fLabel = $('btnFullSyncLabel');
+    const qBtn = $('btnQuickSync');
+    const fBtn = $('btnFullSync');
+    if (!qLabel || !fLabel || !qBtn || !fBtn) return;
 
-    const optMap = [
-      ['#filterSort option[value="newest"]', dict.sort_newest],
-      ['#filterSort option[value="oldest"]', dict.sort_oldest],
-      ['#filterSort option[value="downloads"]', dict.sort_downloads],
-      ['#filterSort option[value="name_asc"]', dict.sort_name_asc],
-      ['#filterSort option[value="name_desc"]', dict.sort_name_desc],
-      ['#filterSort option[value="size_desc"]', dict.sort_size_desc],
-      ['#filterSort option[value="size_asc"]', dict.sort_size_asc],
-      ['#filterMaxIos option[value="all"]', dict.ios_all],
-      ['#filterMaxDays option[value="all"]', dict.age_all],
-      ['#filterMaxDays option[value="0"]', dict.age_0],
-      ['#filterMaxDays option[value="3"]', dict.age_3],
-      ['#filterMaxDays option[value="7"]', dict.age_7],
-      ['#filterMaxDays option[value="30"]', dict.age_30],
-      ['#filterSize option[value="all"]', dict.size_all],
-    ];
-    for (const [sel, label] of optMap) {
-      const el = document.querySelector(sel);
-      if (el && label) el.textContent = label;
+    if (!state.isCloudMode || !cloudEngine) {
+      qLabel.textContent = 'Quick Sync';
+      qBtn.title = 'Check DailyUploads page 1 for new uploads (~1–2s)';
+      fLabel.textContent = 'Full';
+      fBtn.title = 'Re-scrape entire DailyUploads catalog (~7s)';
+      return;
     }
 
-    $('btnLang').textContent = state.lang.toUpperCase();
+    const cfg = cloudEngine.getCloudSettings();
+    const hasPat = Boolean(cfg.github_pat && cfg.github_repo);
+    if (hasPat) {
+      qLabel.textContent = 'Cloud Sync';
+      qBtn.title = 'Dispatch GitHub Actions quick sync & load fresh catalog';
+      fLabel.textContent = 'Full';
+      fBtn.title = 'Dispatch GitHub Actions full catalog resync';
+    } else {
+      qLabel.textContent = 'Refresh';
+      qBtn.title = 'Reload latest cloud catalog snapshot (bypasses CDN cache)';
+      fLabel.textContent = '⚡ Actions';
+      fBtn.title = 'Open GitHub Actions to trigger a manual cloud scrape (or add a GitHub Token in Settings)';
+    }
   }
 
   function buildFilterQueryParams(extra = {}) {
@@ -417,6 +462,25 @@
 
   /* ── Data Loaders ─────────────────────────────────────── */
 
+  function refreshLastSyncDisplay() {
+    const st = state.stats;
+    if (!st) return;
+    const firstSource = st.sources?.[0];
+    const lastIso = firstSource?.last_sync_at || st.exported_at || '';
+    $('kpiLastSync').textContent = lastIso ? formatRelativeTime(lastIso) : 'Syncing...';
+    $('kpiLastSync').title = lastIso ? new Date(lastIso).toLocaleString() : '';
+
+    const subEl = $('kpiLastSyncSub');
+    if (subEl) {
+      const clock = formatClockTime(lastIso);
+      if (state.isCloudMode) {
+        subEl.textContent = clock ? `Auto ~15m • ${clock}` : 'Auto ~15m (Cloud)';
+      } else {
+        subEl.textContent = clock ? `Synced at ${clock}` : '';
+      }
+    }
+  }
+
   async function loadStats() {
     const st = await api('/api/stats');
     state.stats = st;
@@ -424,12 +488,9 @@
     $('kpiTotalApps').textContent = (st.total_apps || 0).toLocaleString();
     $('kpiToday').textContent = (st.uploaded_today || 0).toLocaleString();
     $('kpiWatched').textContent = (st.watchlist_count || 0).toLocaleString();
+    refreshLastSyncDisplay();
 
     const firstSource = st.sources?.[0];
-    $('kpiLastSync').textContent = firstSource?.last_sync_at
-      ? formatRelativeTime(firstSource.last_sync_at)
-      : 'Syncing...';
-
     if (firstSource) {
       $('sourceHeaderLink').href = `https://dailyuploads.net/users/${encodeURIComponent(firstSource.username)}`;
       $('sourceHeaderLink').textContent = `${firstSource.username} ↗`;
@@ -450,8 +511,11 @@
     if (st.sources && st.sources.length > 1) {
       srcWrap.classList.remove('hidden');
       const cur = state.source;
-      srcSel.innerHTML = `<option value="all">Semua Source</option>` +
-        st.sources.map((s) => `<option value="${esc(s.username)}">${esc(s.username)} (${s.active_files})</option>`).join('');
+      srcSel.innerHTML =
+        `<option value="all">All Sources</option>` +
+        st.sources
+          .map((s) => `<option value="${esc(s.username)}">${esc(s.username)} (${s.active_files})</option>`)
+          .join('');
       srcSel.value = cur;
     } else {
       srcWrap.classList.add('hidden');
@@ -480,16 +544,22 @@
     // Extension select
     const extSel = $('filterExt');
     extSel.innerHTML =
-      `<option value="all">Semua</option>` +
+      `<option value="all">All Formats</option>` +
       (f.extensions || [])
         .map((e) => `<option value="${esc(e.name)}">.${esc(e.name)} (${e.count})</option>`)
         .join('');
+    if (state.extension !== 'all' && !Array.from(extSel.options).some((o) => o.value === state.extension)) {
+      const opt = document.createElement('option');
+      opt.value = state.extension;
+      opt.textContent = `.${state.extension}`;
+      extSel.appendChild(opt);
+    }
     extSel.value = state.extension;
 
     // Tag select
     const tagSel = $('filterTag');
     tagSel.innerHTML =
-      `<option value="all">${state.lang === 'en' ? 'All Tags' : 'Semua Tag'}</option>` +
+      `<option value="all">All Tags</option>` +
       (f.tags || [])
         .map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (${t.count})</option>`)
         .join('');
@@ -513,6 +583,7 @@
 
   let searchSeq = 0;
   async function loadFiles() {
+    syncUrlFromState();
     const seq = ++searchSeq;
     const params = buildFilterQueryParams();
     const res = await api(`/api/files?${params.toString()}`);
@@ -527,14 +598,11 @@
 
     const start = res.total === 0 ? 0 : (res.page - 1) * res.limit + 1;
     const end = Math.min(res.total, res.page * res.limit);
-    const en = state.lang === 'en';
-    const unit = res.grouped ? (en ? 'apps' : 'aplikasi') : en ? 'files' : 'file';
+    const unit = res.grouped ? 'apps' : 'files';
     summary.textContent =
       res.total === 0
         ? `0 ${unit}`
-        : en
-          ? `Showing ${start}–${end} of ${res.total.toLocaleString()} ${unit}`
-          : `Menampilkan ${start}–${end} dari ${res.total.toLocaleString()} ${unit}`;
+        : `Showing ${start}–${end} of ${res.total.toLocaleString()} ${unit}`;
 
     if (!res.items || res.items.length === 0) {
       container.className = '';
@@ -542,13 +610,13 @@
       container.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">${state.stats?.total_files === 0 ? '🛰️' : '🔍'}</div>
-          <h3>${state.stats?.total_files === 0 ? 'Katalog sedang disinkronkan...' : 'Tidak ada aplikasi yang cocok'}</h3>
+          <h3>${state.stats?.total_files === 0 ? 'Syncing initial catalog...' : 'No matching apps found'}</h3>
           <p>${
             state.stats?.total_files === 0
-              ? 'Tunggu beberapa detik hingga sinkronisasi pertama dari DailyUploads selesai, atau klik Full Sync.'
+              ? 'Please wait a few seconds while DailyUploads catalog finishes syncing, or trigger a Full Sync.'
               : hasQuery
-                ? `Belum ada file untuk "${esc(state.q)}". Kamu bisa klik "Pantau Keyword" di atas supaya dapat notifikasi otomatis saat nanti di-upload!`
-                : 'Coba ubah atau reset filter pencarian kamu.'
+                ? `No uploads match "${esc(state.q)}" yet. Click "Watch Keyword" above to get notified automatically as soon as it gets uploaded!`
+                : 'Try adjusting or resetting your search filters.'
           }</p>
         </div>
       `;
@@ -562,14 +630,14 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>Aplikasi</th>
-              <th>Versi</th>
+              <th>App</th>
+              <th>Version</th>
               <th>Platform</th>
-              <th>Ukuran</th>
-              <th>iOS</th>
-              <th>Upload</th>
+              <th>Size</th>
+              <th>Min iOS</th>
+              <th>Uploaded</th>
               <th>DL</th>
-              <th>Aksi</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -604,6 +672,7 @@
           <div class="app-title-wrap">
             <h3 class="app-title" data-open-versions="${esc(item.app_slug)}" data-app-name="${esc(item.app_name)}">${esc(item.app_name)}</h3>
             <div class="app-subrow">
+              ${isToday ? '<span class="new-badge">NEW</span>' : ''}
               <span class="ver-badge">${esc(ver)}</span>
               <span class="plat-badge plat-${esc(item.platform)}">${esc(item.platform)}</span>
               ${
@@ -618,7 +687,7 @@
             data-toggle-watch="${esc(item.app_slug)}"
             data-app-name="${esc(item.app_name)}"
             data-watched="${item.is_watched ? '1' : '0'}"
-            title="${item.is_watched ? 'Hapus dari Watchlist' : 'Pantau update aplikasi ini'}"
+            title="${item.is_watched ? 'Remove from Watchlist' : 'Watch this app for new versions'}"
           >
             ${item.is_watched ? '⭐ Watched' : '🔔 Watch'}
           </button>
@@ -643,7 +712,7 @@
 
         <div class="card-actions">
           <button class="btn btn-ghost btn-xs" data-open-versions="${esc(item.app_slug)}" data-app-name="${esc(item.app_name)}">
-            📋 Detail${vCount > 1 ? ` (${vCount})` : ''}
+            📋 Details${vCount > 1 ? ` (${vCount})` : ''}
           </button>
           <button class="btn btn-ghost btn-xs" data-copy-url="${esc(item.download_url)}">🔗 Copy</button>
           <span class="spacer"></span>
@@ -657,11 +726,12 @@
     const ver = item.version ? `v${item.version}` : '—';
     const vCount = item.version_count || 1;
     const dlCount = item.total_downloads ?? item.downloads ?? 0;
+    const isToday = item.uploaded_days_ago === 0;
     return `
       <tr>
         <td>
           <div class="app-title" style="font-size:13.5px" data-open-versions="${esc(item.app_slug)}" data-app-name="${esc(item.app_name)}">
-            ${esc(item.app_name)} ${vCount > 1 ? `<span class="builds-btn">${vCount} builds</span>` : ''}
+            ${isToday ? '<span class="new-badge" style="margin-right:4px">NEW</span>' : ''}${esc(item.app_name)} ${vCount > 1 ? `<span class="builds-btn">${vCount} builds</span>` : ''}
           </div>
           <div class="raw-filename" style="max-width:340px" title="${esc(item.raw_filename)}">${esc(item.raw_filename)}</div>
         </td>
@@ -669,13 +739,13 @@
         <td><span class="plat-badge plat-${esc(item.platform)}">${esc(item.platform)}</span></td>
         <td>${esc(item.size_text || '—')}</td>
         <td>${esc(item.min_ios_label || '—')}</td>
-        <td class="${item.uploaded_days_ago === 0 ? 'meta-today' : ''}">${esc(formatAge(item.uploaded_days_ago))}</td>
+        <td class="${isToday ? 'meta-today' : ''}">${esc(formatAge(item.uploaded_days_ago))}</td>
         <td>${dlCount}</td>
         <td>
           <div style="display:flex;gap:5px;flex-wrap:nowrap">
-            <button class="btn btn-amber btn-xs ${item.is_watched ? 'watched' : ''}" data-toggle-watch="${esc(item.app_slug)}" data-app-name="${esc(item.app_name)}" data-watched="${item.is_watched ? '1' : '0'}">${item.is_watched ? '⭐' : '🔔'}</button>
-            <button class="btn btn-ghost btn-xs" data-copy-url="${esc(item.download_url)}" title="Copy Link">🔗</button>
-            <a class="btn btn-primary btn-xs" href="${esc(item.download_url)}" target="_blank" rel="noopener noreferrer">↗</a>
+            <button class="btn btn-amber btn-xs ${item.is_watched ? 'watched' : ''}" data-toggle-watch="${esc(item.app_slug)}" data-app-name="${esc(item.app_name)}" data-watched="${item.is_watched ? '1' : '0'}" title="${item.is_watched ? 'Unwatch' : 'Watch'}">${item.is_watched ? '⭐' : '🔔'}</button>
+            <button class="btn btn-ghost btn-xs" data-copy-url="${esc(item.download_url)}" title="Copy Download Link">🔗</button>
+            <a class="btn btn-primary btn-xs" href="${esc(item.download_url)}" target="_blank" rel="noopener noreferrer" title="Download">↗</a>
           </div>
         </td>
       </tr>
@@ -713,8 +783,8 @@
       box.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">⭐</div>
-          <h3>Watchlist masih kosong</h3>
-          <p>Klik tombol <b>🔔 Watch</b> pada aplikasi di tab Katalog, atau tambahkan aturan keyword di atas untuk mulai memantau update terbaru!</p>
+          <h3>Your watchlist is empty</h3>
+          <p>Click <b>🔔 Watch</b> on any app card in the Catalog tab, or add a keyword rule above to start tracking new releases automatically!</p>
         </div>
       `;
       return;
@@ -723,13 +793,16 @@
     box.innerHTML = items
       .map((w) => {
         const lf = w.latest_file;
-        const latestVer = lf?.version ? `v${lf.version}` : w.last_known_version ? `v${w.last_known_version}` : 'Belum ada file';
-        const scopeBadge =
-          state.isCloudMode
-            ? w.scope === 'cloud'
-              ? '<span class="tag-pill tag-highlight" title="Tersimpan di Cloud GitHub — notifikasi otomatis 24/7 aktif">☁️ Cloud 24/7</span>'
-              : '<span class="tag-pill" title="Tersimpan di browser ini. Ketik /watch di Bot Telegram atau Push ke GitHub agar notif HP 24/7 aktif">🌐 Browser</span>'
-            : '';
+        const latestVer = lf?.version
+          ? `v${lf.version}`
+          : w.last_known_version
+            ? `v${w.last_known_version}`
+            : 'No matching upload yet';
+        const scopeBadge = state.isCloudMode
+          ? w.scope === 'cloud'
+            ? '<span class="tag-pill tag-highlight" title="Saved in GitHub Cloud — 24/7 push alerts active">☁️ Cloud 24/7</span>'
+            : '<span class="tag-pill" title="Saved in this browser. Send /watch to your Telegram Bot or Push to GitHub in Settings for 24/7 mobile alerts">🌐 Browser</span>'
+          : '';
         const tgCmd = `/watch ${w.watch_type === 'keyword' ? w.keyword : w.display_name}`;
         return `
           <div class="list-card">
@@ -739,10 +812,10 @@
                 <span class="ver-badge">${esc(w.watch_type === 'keyword' ? `Keyword: ${w.keyword}` : 'App')}</span>
                 ${scopeBadge}
                 ${w.platform_filter ? `<span class="plat-badge plat-${esc(w.platform_filter)}">${esc(w.platform_filter)}</span>` : ''}
-                ${w.alert_count > 0 ? `<span class="tag-pill tag-highlight">${w.alert_count} alert</span>` : ''}
+                ${w.alert_count > 0 ? `<span class="tag-pill tag-highlight">${w.alert_count} alert${w.alert_count === 1 ? '' : 's'}</span>` : ''}
               </div>
               <div class="meta-row mt-12" style="margin-top:6px">
-                <span>Versi terbaru: <b>${esc(latestVer)}</b></span>
+                <span>Latest version: <b>${esc(latestVer)}</b></span>
                 ${lf ? `<span>• ${esc(lf.size_text)} • ${esc(formatAge(lf.uploaded_days_ago))}</span>` : ''}
                 ${w.notes ? `<span>• 📝 ${esc(w.notes)}</span>` : ''}
               </div>
@@ -750,23 +823,23 @@
             <div class="list-card-actions">
               ${
                 lf
-                  ? `<a class="btn btn-primary btn-xs" href="${esc(lf.download_url)}" target="_blank" rel="noopener noreferrer">Download Terbaru ↗</a>`
+                  ? `<a class="btn btn-primary btn-xs" href="${esc(lf.download_url)}" target="_blank" rel="noopener noreferrer">Download Latest ↗</a>`
                   : ''
               }
-              <button class="btn btn-ghost btn-xs" data-search-watch="${esc(w.watch_type === 'keyword' ? w.keyword : w.display_name)}">🔍 Lihat di Katalog</button>
+              <button class="btn btn-ghost btn-xs" data-search-watch="${esc(w.watch_type === 'keyword' ? w.keyword : w.display_name)}">🔍 View in Catalog</button>
               ${
                 state.isCloudMode && w.scope !== 'cloud'
-                  ? `<button class="btn btn-ghost btn-xs" data-copy-url="${esc(tgCmd)}" title="Salin perintah /watch untuk dikirim ke Bot Telegram">📲 Copy /watch</button>`
+                  ? `<button class="btn btn-ghost btn-xs" data-copy-url="${esc(tgCmd)}" title="Copy /watch command to send to your Telegram Bot">📲 Copy /watch</button>`
                   : ''
               }
               ${
                 !state.isCloudMode || w.scope !== 'cloud'
                   ? `<button class="btn btn-ghost btn-xs" data-toggle-notify="${esc(w.id)}" data-enabled="${w.notify_enabled}">
-                      ${w.notify_enabled ? '🔔 Notif ON' : '🔕 Notif OFF'}
+                      ${w.notify_enabled ? '🔔 Alerts ON' : '🔕 Alerts OFF'}
                     </button>`
                   : ''
               }
-              <button class="btn btn-danger-ghost btn-xs" data-del-watch="${esc(w.id)}">🗑 Hapus</button>
+              <button class="btn btn-danger-ghost btn-xs" data-del-watch="${esc(w.id)}">🗑 Remove</button>
             </div>
           </div>
         `;
@@ -791,8 +864,8 @@
       box.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">🔔</div>
-          <h3>Belum ada notifikasi update</h3>
-          <p>Saat aplikasi di Watchlist kamu mendapat upload baru di DailyUploads, notifikasi lengkap dengan perbandingan versi akan muncul di sini!</p>
+          <h3>No update notifications yet</h3>
+          <p>Whenever an app or keyword on your Watchlist receives a new upload on DailyUploads, version comparisons and download links will appear here!</p>
         </div>
       `;
       return;
@@ -815,7 +888,7 @@
                 <span class="plat-badge plat-${esc(a.platform)}">${esc(a.platform)}</span>
               </div>
               <div class="meta-row" style="margin-top:6px">
-                <span>Watch: <b>${esc(a.watch_name)}</b></span>
+                <span>Rule: <b>${esc(a.watch_name)}</b></span>
                 <span>• ${esc(a.size_text || '—')}</span>
                 <span>• ${esc(formatRelativeTime(a.created_at))}</span>
               </div>
@@ -823,7 +896,7 @@
             </div>
             <div class="list-card-actions">
               <a class="btn btn-primary btn-xs" href="${esc(a.download_url)}" target="_blank" rel="noopener noreferrer">Download ↗</a>
-              ${!a.is_read ? `<button class="btn btn-ghost btn-xs" data-read-alert="${a.id}">✓ Dibaca</button>` : ''}
+              ${!a.is_read ? `<button class="btn btn-ghost btn-xs" data-read-alert="${esc(a.id)}">✓ Mark Read</button>` : ''}
             </div>
           </div>
         `;
@@ -837,23 +910,30 @@
     const st = await api('/api/stats');
     state.stats = st;
 
+    if ($('insCatalogSize')) $('insCatalogSize').textContent = formatBytesHuman(st.total_size_bytes || 0);
+    if ($('insTotalDownloads')) $('insTotalDownloads').textContent = (st.total_downloads || 0).toLocaleString();
+    if ($('insUploadedWeek')) $('insUploadedWeek').textContent = `${(st.uploaded_week || 0).toLocaleString()} files`;
+    if ($('insSourcesCount')) $('insSourcesCount').textContent = String((st.sources || []).length);
+
     $('topDownloadedList').innerHTML =
       (st.top_downloaded || [])
         .map(
           (f, idx) => `
         <div class="mini-row">
           <div style="min-width:0">
-            <div><b>#${idx + 1} ${esc(f.app_name)}</b> <span class="ver-badge">${esc(f.version ? 'v' + f.version : '')}</span></div>
+            <div class="app-title" style="font-size:13.5px" data-open-versions="${esc(f.app_slug)}" data-app-name="${esc(f.app_name)}">
+              <b>#${idx + 1} ${esc(f.app_name)}</b> ${f.version ? `<span class="ver-badge">v${esc(f.version)}</span>` : ''}
+            </div>
             <div class="muted-text">${esc(f.platform)} • ${esc(f.size_text)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="tag-pill tag-highlight">⬇️ ${f.downloads}</span>
-            <a class="btn btn-ghost btn-xs" href="${esc(f.download_url)}" target="_blank" rel="noopener noreferrer">↗</a>
+            <a class="btn btn-ghost btn-xs" href="${esc(f.download_url)}" target="_blank" rel="noopener noreferrer" title="Download">↗</a>
           </div>
         </div>
       `
         )
-        .join('') || '<div class="muted-text">Belum ada data.</div>';
+        .join('') || '<div class="muted-text">No data yet.</div>';
 
     $('multiVersionList').innerHTML =
       (st.multi_version_apps || [])
@@ -863,12 +943,12 @@
           <div><b>${esc(a.app_name)}</b></div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="ver-badge">${a.versions} builds</span>
-            <button class="btn btn-ghost btn-xs" data-open-versions="${esc(a.app_slug)}" data-app-name="${esc(a.app_name)}">Lihat</button>
+            <button class="btn btn-ghost btn-xs" data-open-versions="${esc(a.app_slug)}" data-app-name="${esc(a.app_name)}">View</button>
           </div>
         </div>
       `
         )
-        .join('') || '<div class="muted-text">Belum ada data.</div>';
+        .join('') || '<div class="muted-text">No data yet.</div>';
 
     $('sourcesList').innerHTML = (st.sources || [])
       .map(
@@ -880,15 +960,15 @@
             <a href="https://dailyuploads.net/users/${encodeURIComponent(s.username)}" target="_blank" rel="noopener noreferrer" class="source-pill">dailyuploads.net/users/${esc(s.username)} ↗</a>
           </div>
           <div class="meta-row" style="margin-top:5px">
-            <span>${(s.active_files || 0).toLocaleString()} file • ${(s.active_apps || 0).toLocaleString()} app</span>
-            <span>• Sync terakhir: ${esc(formatRelativeTime(s.last_sync_at))}</span>
+            <span>${(s.active_files || 0).toLocaleString()} files • ${(s.active_apps || 0).toLocaleString()} apps</span>
+            <span>• Last sync: ${esc(formatRelativeTime(s.last_sync_at))}</span>
           </div>
         </div>
         <div class="list-card-actions">
-          <button class="btn btn-ghost btn-xs" data-sync-source="${esc(s.username)}">🔄 Full Sync</button>
+          <button class="btn btn-ghost btn-xs" data-sync-source="${esc(s.username)}">🔄 ${state.isCloudMode ? 'Refresh / Sync' : 'Full Sync'}</button>
           ${
             !state.isCloudMode && st.sources.length > 1
-              ? `<button class="btn btn-danger-ghost btn-xs" data-del-source="${esc(s.username)}">🗑 Hapus</button>`
+              ? `<button class="btn btn-danger-ghost btn-xs" data-del-source="${esc(s.username)}">🗑 Remove</button>`
               : ''
           }
         </div>
@@ -900,18 +980,18 @@
     const logs = st.sync?.recentLogs || [];
     $('syncLogsContainer').innerHTML =
       logs.length === 0
-        ? '<div class="muted-text" style="padding:12px">Belum ada riwayat sinkronisasi.</div>'
+        ? '<div class="muted-text" style="padding:12px">No sync history recorded yet.</div>'
         : `
       <table class="data-table">
         <thead>
-          <tr><th>Waktu</th><th>Source</th><th>Mode</th><th>Status</th><th>Diproses</th><th>Baru</th><th>Alert</th><th>Durasi</th></tr>
+          <tr><th>Time</th><th>Source</th><th>Mode</th><th>Status</th><th>Checked</th><th>New</th><th>Alerts</th><th>Duration</th></tr>
         </thead>
         <tbody>
           ${logs
             .map(
               (l) => `
             <tr>
-              <td>${esc(formatRelativeTime(l.created_at))}</td>
+              <td title="${esc(l.created_at)}">${esc(formatRelativeTime(l.created_at))}</td>
               <td>${esc(l.source_user)}</td>
               <td><code>${esc(l.mode)}</code></td>
               <td>${l.status === 'ok' ? '<span class="tag-pill tag-highlight">OK</span>' : `<span class="tag-pill" style="color:var(--danger)" title="${esc(l.error_message)}">ERROR</span>`}</td>
@@ -953,31 +1033,31 @@
       if ($('setCloudGhRepo')) $('setCloudGhRepo').value = repoVal;
       if ($('setCloudGhPat')) $('setCloudGhPat').value = cloud?.github_pat || '';
       if ($('tgSettingsTitle')) {
-        $('tgSettingsTitle').textContent = '✈️ Tes Cepat & Deteksi Chat ID Bot Telegram';
+        $('tgSettingsTitle').textContent = '✈️ Telegram Bot Quick Test & Chat ID Detector';
       }
       if ($('tgSettingsDesc')) {
         $('tgSettingsDesc').innerHTML =
-          '1. Tempel <b>Bot Token</b> dari <b>@BotFather</b> di bawah (tidak disimpan ke server/localStorage).<br />' +
-          '2. Kirim pesan <code>/start</code> ke bot kamu di Telegram, lalu klik <b>🔍 Deteksi Chat ID Otomatis</b>.<br />' +
-          '3. Klik <b>🧪 Test Kirim Telegram</b>, lalu salin Token &amp; Chat ID ke <b>🔐 GitHub Repository Secrets</b> di atas agar aktif 24/7!';
+          '1. Paste your <b>Bot Token</b> from <b>@BotFather</b> below (ephemeral — never saved to server or localStorage).<br />' +
+          '2. Send <code>/start</code> to your bot in Telegram, then click <b>🔍 Auto-Detect Chat ID</b>.<br />' +
+          '3. Click <b>🧪 Test Telegram</b>, then copy both Token &amp; Chat ID into <b>🔐 GitHub Repository Secrets</b> above for 24/7 cloud alerts!';
       }
       if ($('webhookSettingsDesc')) {
         $('webhookSettingsDesc').innerHTML =
-          'Uji coba Discord / JSON Webhook langsung dari browser, lalu simpan URL sebagai secret <code>WEBHOOK_URL</code> di <b>GitHub Repository Secrets</b> untuk notifikasi 24/7.';
+          'Test your Discord / JSON Webhook directly from the browser, then save the URL as <code>WEBHOOK_URL</code> in <b>GitHub Repository Secrets</b> for automated 24/7 notifications.';
       }
       updateCloudRepoLinksUI(repoVal);
       box.className = 'status-box ok mt-12';
       box.innerHTML =
-        '☁️ <b>Mode Cloud 24/7:</b> Bot &amp; Notifikasi dijalankan otomatis oleh <b>GitHub Actions</b> setiap ~15 menit menggunakan <code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code> di GitHub Secrets (bukan dari penyimpanan browser).';
+        '☁️ <b>Cloud 24/7 Mode:</b> Telegram Bot &amp; Push Alerts run automatically via <b>GitHub Actions</b> on a ~15-minute schedule using <code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code> from GitHub Secrets.';
     } else if (telegram?.running) {
       box.className = 'status-box ok mt-12';
-      box.textContent = `✅ Bot aktif & listening sebagai @${telegram.botUsername}`;
+      box.textContent = `✅ Bot active & listening as @${telegram.botUsername}`;
     } else if (telegram?.lastError) {
       box.className = 'status-box err mt-12';
       box.textContent = `❌ Bot error: ${telegram.lastError}`;
     } else {
       box.className = 'status-box mt-12';
-      box.textContent = '⏸️ Interactive Telegram Bot belum diaktifkan (opsional).';
+      box.textContent = '⏸️ Interactive Telegram Bot is currently disabled (optional).';
     }
   }
 
@@ -987,8 +1067,8 @@
     state.modalSlug = slug;
     state.modalAppName = appName || slug;
     $('modalAppTitle').textContent = state.modalAppName;
-    $('modalAppSubtitle').textContent = 'Memuat versi...';
-    $('modalBody').innerHTML = '<div class="muted-text">Memuat...</div>';
+    $('modalAppSubtitle').textContent = 'Loading versions...';
+    $('modalBody').innerHTML = '<div class="muted-text">Loading...</div>';
     $('versionsModal').classList.remove('hidden');
 
     try {
@@ -998,7 +1078,7 @@
       state.modalIsWatched = Boolean(first?.is_watched);
       updateModalWatchButton();
       $('modalAppTitle').textContent = first?.app_name || state.modalAppName;
-      $('modalAppSubtitle').textContent = `${versions.length} file/build ditemukan di katalog`;
+      $('modalAppSubtitle').textContent = `${versions.length} build${versions.length === 1 ? '' : 's'} found in catalog`;
 
       $('modalBody').innerHTML = versions
         .map(
@@ -1007,7 +1087,7 @@
           <div class="list-card-main">
             <div class="list-card-title">
               <span class="ver-badge">${esc(v.version ? 'v' + v.version : '.' + v.extension)}</span>
-              ${idx === 0 ? '<span class="tag-pill tag-highlight">Terbaru</span>' : ''}
+              ${idx === 0 ? '<span class="tag-pill tag-highlight">Latest</span>' : ''}
               <span class="plat-badge plat-${esc(v.platform)}">${esc(v.platform)}</span>
               ${v.min_ios_label ? `<span class="tag-pill">${esc(v.min_ios_label)}+</span>` : ''}
             </div>
@@ -1033,7 +1113,7 @@
         )
         .join('');
     } catch (err) {
-      $('modalBody').innerHTML = `<div class="muted-text">Gagal memuat: ${esc(err.message)}</div>`;
+      $('modalBody').innerHTML = `<div class="muted-text">Failed to load versions: ${esc(err.message)}</div>`;
     }
   }
 
@@ -1050,17 +1130,17 @@
   /* ── Actions ──────────────────────────────────────────── */
 
   function formatWatchAddedToast(label, res) {
-    if (!res?.created) return `"${label}" sudah ada di Watchlist.`;
-    if (!state.isCloudMode) return `⭐ Memantau update untuk ${label}!`;
-    if (res.syncedToCloud) return `☁️ Dipantau 24/7 di GitHub Cloud: ${label}!`;
-    return `⭐ Ditandai di browser! Untuk notif HP 24/7, kirim "/watch ${label}" ke Bot Telegram atau hubungkan GitHub di Pengaturan.`;
+    if (!res?.created) return `"${label}" is already on your Watchlist.`;
+    if (!state.isCloudMode) return `⭐ Now watching updates for ${label}!`;
+    if (res.syncedToCloud) return `☁️ Watching 24/7 on GitHub Cloud: ${label}!`;
+    return `⭐ Saved in this browser! For 24/7 mobile push alerts, send "/watch ${label}" to your Telegram Bot or connect a GitHub Token in Settings.`;
   }
 
   async function toggleAppWatch(slug, appName, currentlyWatched) {
     try {
       if (currentlyWatched) {
         await api(`/api/watchlist/by-slug/${encodeURIComponent(slug)}`, { method: 'DELETE' });
-        toast(`Berhenti memantau ${appName}`, 'info');
+        toast(`Stopped watching ${appName}`, 'info');
       } else {
         const res = await api('/api/watchlist', {
           method: 'POST',
@@ -1084,13 +1164,17 @@
     banner.classList.remove('hidden');
     const page = info.page || 0;
     const totalPages = info.totalPages || 1;
-    const pct = Math.min(95, Math.max(12, Math.round((page / totalPages) * 100)));
+    const pct = info.percent ?? Math.min(95, Math.max(12, Math.round((page / totalPages) * 100)));
     $('syncProgressBar').style.width = `${pct}%`;
+    if (info.customText) {
+      $('syncBannerText').textContent = info.customText;
+      return;
+    }
     const detail =
       info.fetchedSoFar > 0
-        ? `halaman ${page}/${totalPages} (${info.fetchedSoFar} file)`
-        : `menghubungi DailyUploads (${info.mode || 'sync'})...`;
-    $('syncBannerText').textContent = `Menyinkronkan ${info.sourceUser || info.source || ''} — ${detail}`;
+        ? `page ${page}/${totalPages} (${info.fetchedSoFar} files)`
+        : `connecting to DailyUploads (${info.mode || 'sync'})...`;
+    $('syncBannerText').textContent = `Syncing ${info.sourceUser || info.source || ''} — ${detail}`;
   }
 
   function hideSyncBanner() {
@@ -1099,26 +1183,66 @@
 
   async function triggerSync(mode, source = '') {
     if (state.isCloudMode && cloudEngine) {
+      const cfg = cloudEngine.getCloudSettings();
+      const hasPat = Boolean(cfg.github_pat && cfg.github_repo);
+
+      // Without PAT, clicking the secondary Actions button opens GitHub Actions workflow page directly
+      if (mode === 'full' && !hasPat && !source) {
+        const repoClean = (cfg.github_repo || 'alfarizigan/dailyuploads-radar').trim();
+        window.open(`https://github.com/${repoClean}/actions/workflows/radar-sync.yml`, '_blank', 'noopener,noreferrer');
+        toast(
+          '⚡ Opened GitHub Actions — click "Run workflow" there, or add a GitHub Token in Settings for 1-click Web sync.',
+          'info'
+        );
+        return;
+      }
+
       try {
-        showSyncBanner({ source: 'Cloud GitHub', mode, page: 1, totalPages: 2 });
-        const cfg = cloudEngine.getCloudSettings();
-        let dispatched = false;
-        if (cfg.github_pat && cfg.github_repo) {
-          const d = await cloudEngine.triggerGithubWorkflow(mode);
-          dispatched = d.dispatched;
+        if (hasPat) {
+          const prevExportedAt = cloudEngine.state.exported_at;
+          showSyncBanner({
+            percent: 20,
+            customText: `⚡ Dispatching GitHub Actions (${mode} sync)...`,
+          });
+          await cloudEngine.triggerGithubWorkflow(mode);
+          const waitRes = await cloudEngine.waitForCloudSync(prevExportedAt, {
+            timeoutMs: mode === 'full' ? 60000 : 45000,
+            intervalMs: 3500,
+            onPoll: ({ elapsedMs, timeoutMs }) => {
+              const pct = Math.min(92, 25 + Math.round((elapsedMs / timeoutMs) * 67));
+              showSyncBanner({
+                percent: pct,
+                customText: `⚡ GitHub Actions scraping DailyUploads (${Math.round(elapsedMs / 1000)}s)...`,
+              });
+            },
+          });
+          hideSyncBanner();
+          await refreshActiveTab();
+          toast(
+            waitRes.completed
+              ? `✅ Cloud sync (${mode}) finished in ${(waitRes.elapsedMs / 1000).toFixed(0)}s — catalog updated!`
+              : `⚡ GitHub Actions (${mode}) is still running in the background; refresh in a few seconds.`,
+            'success'
+          );
+          return;
         }
-        await cloudEngine.fetchRemoteState({ forceFresh: true });
+
+        // No PAT: fetch fresh commit SHA from radar-state branch (zero CDN cache)
+        showSyncBanner({
+          percent: 55,
+          customText: '☁️ Checking latest snapshot on GitHub Cloud...',
+        });
+        const res = await cloudEngine.fetchRemoteState({ forceFresh: true });
         hideSyncBanner();
         await refreshActiveTab();
+        const lastSyncStr = formatRelativeTime(cloudEngine.state.sources?.[0]?.last_sync_at || res.exportedAt);
         toast(
-          dispatched
-            ? `⚡ GitHub Actions (${mode}) dipicu & data Cloud terbaru dimuat!`
-            : `☁️ Data katalog terbaru dari Cloud GitHub berhasil dimuat!`,
+          `☁️ Loaded latest cloud catalog (${res.totalFiles.toLocaleString()} files • last cloud scrape: ${lastSyncStr})`,
           'success'
         );
       } catch (err) {
         hideSyncBanner();
-        toast(`Cloud refresh gagal: ${err.message}`, 'error');
+        toast(`Cloud refresh failed: ${err.message}`, 'error');
       }
       return;
     }
@@ -1131,11 +1255,11 @@
       });
     } catch (err) {
       hideSyncBanner();
-      toast(`Sync gagal: ${err.message}`, 'error');
+      toast(`Sync failed: ${err.message}`, 'error');
     }
   }
 
-  /* ── SSE Live Stream ──────────────────────────────────── */
+  /* ── SSE Live Stream (Local Server Mode) ──────────────── */
 
   function connectSse() {
     const es = new EventSource('/api/events');
@@ -1150,12 +1274,12 @@
       hideSyncBanner();
       try {
         const info = JSON.parse(e.data);
-        const msg = `Sync selesai (${info.sourceUser}): ${info.totalFetched} file, +${info.newFilesCount} baru${
-          info.alertsTriggered > 0 ? `, 🔔 ${info.alertsTriggered} alert!` : ''
+        const msg = `Sync complete (${info.sourceUser}): ${info.totalFetched} files, +${info.newFilesCount} new${
+          info.alertsTriggered > 0 ? `, 🔔 ${info.alertsTriggered} alert${info.alertsTriggered === 1 ? '' : 's'}!` : ''
         }`;
         toast(msg, info.alertsTriggered > 0 ? 'warn' : 'success');
       } catch {
-        toast('Sinkronisasi selesai', 'success');
+        toast('Sync complete', 'success');
       }
       await refreshActiveTab();
     });
@@ -1163,9 +1287,9 @@
       hideSyncBanner();
       try {
         const info = JSON.parse(e.data);
-        toast(`Sync gagal: ${info.error}`, 'error');
+        toast(`Sync failed: ${info.error}`, 'error');
       } catch {
-        toast('Sync gagal', 'error');
+        toast('Sync failed', 'error');
       }
     });
     es.addEventListener('alerts', (e) => {
@@ -1173,7 +1297,7 @@
         const data = JSON.parse(e.data);
         const first = data.alerts?.[0];
         if (first) {
-          toast(`🔔 Update baru: ${first.app_name} ${first.new_version ? 'v' + first.new_version : ''}`, 'warn');
+          toast(`🔔 New update: ${first.app_name} ${first.new_version ? 'v' + first.new_version : ''}`, 'warn');
           if ('Notification' in window && Notification.permission === 'granted') {
             new Notification(`Update: ${first.app_name}`, {
               body: `${first.new_version ? 'v' + first.new_version : 'New upload'} • ${first.size_text}`,
@@ -1198,6 +1322,7 @@
     document.querySelectorAll('.tab-panel').forEach((p) => {
       p.classList.toggle('active', p.id === `tab-${tabName}`);
     });
+    syncUrlFromState();
     await refreshActiveTab();
   }
 
@@ -1242,17 +1367,11 @@
     $('btnQuickSync').addEventListener('click', () => triggerSync('quick'));
     $('btnFullSync').addEventListener('click', () => triggerSync('full'));
 
-    // Theme & Language
+    // Theme
     $('btnTheme').addEventListener('click', () => {
       state.theme = state.theme === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('du_theme', state.theme);
+      safeStorageSet('du_theme', state.theme);
       applyTheme();
-    });
-    $('btnLang').addEventListener('click', () => {
-      state.lang = state.lang === 'id' ? 'en' : 'id';
-      localStorage.setItem('du_lang', state.lang);
-      applyLang();
-      refreshActiveTab().catch(() => {});
     });
 
     // Search input
@@ -1261,6 +1380,7 @@
       state.q = searchInput.value.trim();
       $('btnClearSearch').classList.toggle('hidden', !state.q);
       $('btnWatchQuery').classList.toggle('hidden', !state.q);
+      if ($('searchKbdHint')) $('searchKbdHint').classList.toggle('hidden', Boolean(state.q));
       scheduleSearch();
     });
 
@@ -1269,6 +1389,7 @@
       state.q = '';
       $('btnClearSearch').classList.add('hidden');
       $('btnWatchQuery').classList.add('hidden');
+      if ($('searchKbdHint')) $('searchKbdHint').classList.remove('hidden');
       scheduleSearch();
       searchInput.focus();
     });
@@ -1382,6 +1503,7 @@
       searchInput.value = '';
       $('btnClearSearch').classList.add('hidden');
       $('btnWatchQuery').classList.add('hidden');
+      if ($('searchKbdHint')) $('searchKbdHint').classList.remove('hidden');
       $('filterSource').value = 'all';
       $('filterSort').value = 'newest';
       $('filterExt').value = 'all';
@@ -1399,7 +1521,7 @@
     // View mode
     const applyViewMode = (mode) => {
       state.viewMode = mode;
-      localStorage.setItem('du_view_mode', mode);
+      safeStorageSet('du_view_mode', mode);
       $('viewGrid').classList.toggle('active', mode === 'grid');
       $('viewTable').classList.toggle('active', mode === 'table');
       if (state.lastSearch) renderCatalog(state.lastSearch);
@@ -1407,6 +1529,19 @@
     $('viewGrid').addEventListener('click', () => applyViewMode('grid'));
     $('viewTable').addEventListener('click', () => applyViewMode('table'));
     applyViewMode(state.viewMode);
+
+    // Shareable filtered URL
+    if ($('btnShareSearch')) {
+      $('btnShareSearch').addEventListener('click', async () => {
+        syncUrlFromState();
+        try {
+          await navigator.clipboard.writeText(window.location.href);
+          toast('🔗 Shareable search link copied to clipboard!', 'success');
+        } catch {
+          toast('Failed to copy link to clipboard', 'error');
+        }
+      });
+    }
 
     // Export CSV / JSON
     $('btnExportCsv').addEventListener('click', () => {
@@ -1439,12 +1574,12 @@
           await navigator.clipboard.writeText(url);
           toast(
             url.startsWith('/watch')
-              ? `📲 "${url}" disalin! Kirim ke Bot Telegram kamu.`
-              : '🔗 Link download disalin!',
+              ? `📲 Copied "${url}"! Paste and send it to your Telegram Bot.`
+              : '🔗 Download link copied!',
             'success'
           );
         } catch {
-          toast('Gagal menyalin ke clipboard', 'error');
+          toast('Failed to copy to clipboard', 'error');
         }
         return;
       }
@@ -1486,7 +1621,7 @@
       const delWatch = e.target.closest('[data-del-watch]');
       if (delWatch) {
         await api(`/api/watchlist/${delWatch.dataset.delWatch}`, { method: 'DELETE' });
-        toast('Dihapus dari Watchlist', 'info');
+        toast('Removed from Watchlist', 'info');
         await Promise.all([loadStats(), loadWatchlist()]);
         return;
       }
@@ -1498,7 +1633,7 @@
           method: 'PATCH',
           body: JSON.stringify({ notify_enabled: next }),
         });
-        toast(next ? 'Notifikasi diaktifkan' : 'Notifikasi dimatikan', 'info');
+        toast(next ? 'Notifications enabled' : 'Notifications muted', 'info');
         await loadWatchlist();
         return;
       }
@@ -1518,6 +1653,7 @@
         $('searchInput').value = state.q;
         $('btnClearSearch').classList.remove('hidden');
         $('btnWatchQuery').classList.remove('hidden');
+        if ($('searchKbdHint')) $('searchKbdHint').classList.add('hidden');
         $('filterExt').value = 'all';
         $('filterMaxIos').value = 'all';
         $('filterMaxDays').value = 'all';
@@ -1538,15 +1674,15 @@
 
       const syncSrc = e.target.closest('[data-sync-source]');
       if (syncSrc) {
-        await triggerSync('full', syncSrc.dataset.syncSource);
+        await triggerSync(state.isCloudMode ? 'quick' : 'full', syncSrc.dataset.syncSource);
         return;
       }
 
       const delSrc = e.target.closest('[data-del-source]');
       if (delSrc) {
-        if (!confirm(`Hapus source ${delSrc.dataset.delSource} beserta semua data filenya?`)) return;
+        if (!confirm(`Remove source "${delSrc.dataset.delSource}" and all its indexed files?`)) return;
         await api(`/api/sources/${encodeURIComponent(delSrc.dataset.delSource)}`, { method: 'DELETE' });
-        toast('Source dihapus', 'info');
+        toast('Source removed', 'info');
         await loadInsights();
         return;
       }
@@ -1567,9 +1703,9 @@
             method: 'POST',
             body: JSON.stringify(payload),
           });
-          toast(`✅ Test notifikasi (${channel}) berhasil dikirim!`, 'success');
+          toast(`✅ Test notification (${channel}) sent!`, 'success');
         } catch (err) {
-          toast(`❌ Test gagal: ${err.message}`, 'error');
+          toast(`❌ Test failed: ${err.message}`, 'error');
         } finally {
           testBtn.disabled = false;
         }
@@ -1628,10 +1764,10 @@
           method: 'POST',
           body: JSON.stringify({ items }),
         });
-        toast(`Import selesai: +${res.added} baru (${res.skipped} dilewati)`, 'success');
+        toast(`Import complete: +${res.added} added (${res.skipped} skipped)`, 'success');
         await Promise.all([loadWatchlist(), loadStats()]);
       } catch (err) {
-        toast(`Gagal import: ${err.message}`, 'error');
+        toast(`Import failed: ${err.message}`, 'error');
       } finally {
         e.target.value = '';
       }
@@ -1640,24 +1776,24 @@
     // Alerts actions
     $('btnEnableBrowserNotif').addEventListener('click', async () => {
       if (!('Notification' in window)) {
-        toast('Browser ini tidak mendukung Web Notification.', 'error');
+        toast('This browser does not support Web Notifications.', 'error');
         return;
       }
       const perm = await Notification.requestPermission();
       toast(
-        perm === 'granted' ? '🔔 Notifikasi browser aktif!' : 'Izin notifikasi browser ditolak.',
+        perm === 'granted' ? '🔔 Browser notifications enabled!' : 'Browser notification permission denied.',
         perm === 'granted' ? 'success' : 'warn'
       );
     });
     $('btnMarkAllRead').addEventListener('click', async () => {
       await api('/api/alerts/read-all', { method: 'POST' });
-      toast('Semua notifikasi ditandai dibaca', 'info');
+      toast('All notifications marked as read', 'info');
       await Promise.all([loadAlerts(), loadStats()]);
     });
     $('btnClearAlerts').addEventListener('click', async () => {
-      if (!confirm('Hapus seluruh riwayat notifikasi?')) return;
+      if (!confirm('Clear entire notification history?')) return;
       await api('/api/alerts', { method: 'DELETE' });
-      toast('Riwayat notifikasi dibersihkan', 'info');
+      toast('Notification history cleared', 'info');
       await Promise.all([loadAlerts(), loadStats()]);
     });
 
@@ -1672,7 +1808,7 @@
           body: JSON.stringify({ url: val }),
         });
         $('newSourceInput').value = '';
-        toast(`Source "${source.username}" ditambahkan! Memulai Full Sync...`, 'success');
+        toast(`Added source "${source.username}"! Starting Full Sync...`, 'success');
         await loadInsights();
         await triggerSync('full', source.username);
       } catch (err) {
@@ -1695,10 +1831,10 @@
             webhook_url: $('setWebhookUrl').value.trim(),
           }),
         });
-        toast('💾 Pengaturan disimpan!', 'success');
+        toast('💾 Settings saved!', 'success');
         await loadSettings();
       } catch (err) {
-        toast(`Gagal menyimpan: ${err.message}`, 'error');
+        toast(`Failed to save settings: ${err.message}`, 'error');
       }
     });
 
@@ -1712,17 +1848,17 @@
           if (info.chatIds.length > 0) {
             $('setTgChatId').value = info.chatIds.join(', ');
             toast(
-              `✅ @${info.botUsername} terhubung! Chat ID terdeteksi: ${info.chatIds.join(', ')}`,
+              `✅ Connected to @${info.botUsername}! Detected Chat ID: ${info.chatIds.join(', ')}`,
               'success'
             );
           } else {
             toast(
-              `✅ Token valid (@${info.botUsername})! Kirim pesan /start ke @${info.botUsername} di Telegram lalu klik tombol ini lagi.`,
+              `✅ Valid token (@${info.botUsername})! Send /start to @${info.botUsername} in Telegram, then click this button again.`,
               'warn'
             );
           }
         } catch (err) {
-          toast(`Gagal deteksi Chat ID: ${err.message}`, 'error');
+          toast(`Chat ID detection failed: ${err.message}`, 'error');
         } finally {
           $('btnDetectTgChatId').disabled = false;
         }
@@ -1736,7 +1872,8 @@
         const pat = $('setCloudGhPat').value.trim();
         cloudEngine.updateCloudSettings({ github_repo: repo, github_pat: pat });
         updateCloudRepoLinksUI(repo);
-        toast('☁️ Pengaturan koneksi GitHub Cloud disimpan di browser ini!', 'success');
+        updateSyncButtonsUI();
+        toast('☁️ GitHub Cloud connection settings saved in this browser!', 'success');
       });
     }
 
@@ -1746,17 +1883,18 @@
         const repo = $('setCloudGhRepo').value.trim() || 'alfarizigan/dailyuploads-radar';
         const pat = $('setCloudGhPat').value.trim();
         cloudEngine.updateCloudSettings({ github_repo: repo, github_pat: pat });
+        updateSyncButtonsUI();
         if (!pat) {
-          toast('Isi GitHub Personal Access Token terlebih dahulu, atau gunakan tombol Edit watchlist.json di atas.', 'warn');
+          toast('Enter a GitHub Personal Access Token first, or use the "Edit watchlist.json" link above.', 'warn');
           return;
         }
         try {
           $('btnPushWatchlistCloud').disabled = true;
           await cloudEngine.syncWatchlistToGithub();
-          toast('✅ Watchlist berhasil di-push ke GitHub Cloud (watchlist.json)!', 'success');
+          toast('✅ Watchlist pushed to GitHub Cloud (watchlist.json)!', 'success');
           if (state.tab === 'watchlist') await loadWatchlist();
         } catch (err) {
-          toast(`Gagal push ke GitHub: ${err.message}`, 'error');
+          toast(`Failed to push to GitHub: ${err.message}`, 'error');
         } finally {
           $('btnPushWatchlistCloud').disabled = false;
         }
@@ -1797,6 +1935,7 @@
           const j = await r.json().catch(() => ({}));
           if (j && j.ok) {
             state.isCloudMode = false;
+            updateSyncButtonsUI();
             connectSse();
             return;
           }
@@ -1807,7 +1946,7 @@
     }
 
     if (!window.CloudRadarEngine) {
-      throw new Error('CloudRadarEngine tidak ditemukan.');
+      throw new Error('CloudRadarEngine not found.');
     }
 
     state.isCloudMode = true;
@@ -1821,9 +1960,11 @@
     if ($('addSourceForm')) $('addSourceForm').classList.add('hidden');
     if ($('cloudSourcesHint')) $('cloudSourcesHint').classList.remove('hidden');
     updateCloudRepoLinksUI(cloudEngine.getCloudSettings().github_repo);
+    updateSyncButtonsUI();
 
     await cloudEngine.fetchRemoteState();
-    // Auto-refresh cloud catalog silently every 5 minutes if tab stays open
+
+    // Auto-refresh cloud catalog silently every 5 minutes while visible
     setInterval(() => {
       if (document.visibilityState === 'visible') {
         cloudEngine
@@ -1832,18 +1973,37 @@
           .catch(() => {});
       }
     }, 5 * 60 * 1000);
+
+    // Refresh immediately when user switches back to tab (e.g. mobile Safari resume) after >60s
+    document.addEventListener('visibilitychange', () => {
+      if (
+        document.visibilityState === 'visible' &&
+        Date.now() - (cloudEngine.lastFetchedAt || 0) > 60 * 1000
+      ) {
+        cloudEngine
+          .fetchRemoteState({ forceFresh: true })
+          .then(() => refreshActiveTab())
+          .catch(() => {});
+      }
+    });
   }
 
   async function init() {
+    hydrateStateFromUrl();
     applyTheme();
-    applyLang();
+    syncDomControlsFromState();
     bindEvents();
     await detectAndInitRuntime();
     await refreshActiveTab();
+
+    // Keep relative "Last Sync" indicator ticking smoothly every 30s
+    setInterval(() => {
+      refreshLastSyncDisplay();
+    }, 30 * 1000);
   }
 
   init().catch((err) => {
     console.error(err);
-    toast(`Init error: ${err.message}`, 'error');
+    toast(`Initialization error: ${err.message}`, 'error');
   });
 })();

@@ -165,6 +165,8 @@
       };
       this._ghSyncChain = null;
       this._ghSyncDirty = false;
+      this.lastFetchedAt = 0;
+      this.lastSourceUrl = '';
     }
 
     /* ── Storage Helpers ──────────────────────────────────── */
@@ -438,14 +440,46 @@
       return this.state;
     }
 
+    async _resolveRadarStateCommitSha(repo, pat = '') {
+      if (!this.fetchFn || !repo) return '';
+      try {
+        const apiUrl = `https://api.github.com/repos/${repo}/commits?sha=radar-state&per_page=1`;
+        const opts = pat
+          ? {
+              headers: {
+                Authorization: `Bearer ${pat}`,
+                Accept: 'application/vnd.github+json',
+              },
+            }
+          : undefined;
+        const res = await this.fetchFn(apiUrl, opts);
+        if (!res.ok) return '';
+        const data = await res.json();
+        const sha = Array.isArray(data) ? data[0]?.sha : data?.sha;
+        return typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha) ? sha : '';
+      } catch {
+        return '';
+      }
+    }
+
     async fetchRemoteState({ forceFresh = false } = {}) {
       if (!this.fetchFn) throw new Error('fetch is not available');
-      const repo = this.getCloudSettings().github_repo || this.githubRepo;
+      const cfg = this.getCloudSettings();
+      const repo = cfg.github_repo || this.githubRepo;
       const cacheKey = forceFresh ? Date.now() : Math.floor(Date.now() / 120000);
       const urls = [];
 
       if (repo && /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo)) {
+        if (forceFresh) {
+          // Resolve exact commit SHA on radar-state to bypass 5-minute CDN branch cache completely
+          const sha = await this._resolveRadarStateCommitSha(repo, cfg.github_pat);
+          if (sha) {
+            urls.push(`https://raw.githubusercontent.com/${repo}/${sha}/cloud-state.json`);
+            urls.push(`https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`);
+          }
+        }
         urls.push(`https://raw.githubusercontent.com/${repo}/radar-state/cloud-state.json?v=${cacheKey}`);
+        urls.push(`https://cdn.jsdelivr.net/gh/${repo}@radar-state/cloud-state.json`);
       }
       urls.push(`./data/cloud-state.json?v=${cacheKey}`);
       urls.push(`../data/cloud-state.json?v=${cacheKey}`);
@@ -453,19 +487,47 @@
       let lastErr = null;
       for (const url of urls) {
         try {
-          // Intentionally send a simple CORS GET with no custom headers to avoid OPTIONS preflight on raw.githubusercontent.com
+          // Intentionally send a simple CORS GET with no custom headers to avoid OPTIONS preflight on raw.githubusercontent.com / jsDelivr
           const res = await this.fetchFn(url);
           if (!res.ok) {
             throw new Error(`HTTP ${res.status}`);
           }
           const json = await res.json();
           this.loadStateObject(json);
-          return { ok: true, sourceUrl: url, totalFiles: this.state.files.length };
+          this.lastFetchedAt = Date.now();
+          this.lastSourceUrl = url;
+          return {
+            ok: true,
+            sourceUrl: url,
+            totalFiles: this.state.files.length,
+            exportedAt: this.state.exported_at,
+          };
         } catch (err) {
           lastErr = err;
         }
       }
-      throw lastErr || new Error('Gagal memuat data katalog cloud.');
+      throw lastErr || new Error('Failed to load cloud catalog data.');
+    }
+
+    async waitForCloudSync(previousExportedAt, { timeoutMs = 45000, intervalMs = 3500, onPoll } = {}) {
+      const start = Date.now();
+      let attempt = 0;
+      while (Date.now() - start < timeoutMs) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        attempt += 1;
+        if (onPoll) {
+          onPoll({ attempt, elapsedMs: Date.now() - start, timeoutMs });
+        }
+        try {
+          await this.fetchRemoteState({ forceFresh: true });
+          if (this.state.exported_at && this.state.exported_at !== previousExportedAt) {
+            return { completed: true, elapsedMs: Date.now() - start, exportedAt: this.state.exported_at };
+          }
+        } catch {
+          // Continue polling until timeout
+        }
+      }
+      return { completed: false, elapsedMs: Date.now() - start, exportedAt: this.state.exported_at };
     }
 
     /* ── Watchlist Merging & Browser Alert Detection ──────── */
@@ -1027,9 +1089,9 @@
 
       if (type === 'app') {
         if (!slug && name) slug = slugifyAppName(name);
-        if (!slug) throw new Error('target_slug atau display_name wajib diisi.');
+        if (!slug) throw new Error('target_slug or display_name is required.');
       } else if (!kw) {
-        throw new Error('Keyword wajib diisi.');
+        throw new Error('Keyword is required.');
       }
 
       const candidate = {
@@ -1143,7 +1205,7 @@
     }
 
     importWatchlist(items = []) {
-      if (!Array.isArray(items)) throw new Error('Format import harus berupa array.');
+      if (!Array.isArray(items)) throw new Error('Import payload must be a JSON array.');
       let added = 0;
       let skipped = 0;
       for (const raw of items) {
@@ -1331,7 +1393,7 @@
     async detectTelegramChatId(token) {
       const cleanToken = String(token || '').trim();
       if (!cleanToken) {
-        throw new Error('Tempelkan Telegram Bot Token dari @BotFather terlebih dahulu.');
+        throw new Error('Paste your Telegram Bot Token from @BotFather first.');
       }
 
       const meRes = await this.fetchFn(
@@ -1339,7 +1401,7 @@
       );
       const meData = await meRes.json().catch(() => ({}));
       if (!meRes.ok || meData.ok === false) {
-        throw new Error(meData.description || `Token Bot tidak valid (HTTP ${meRes.status})`);
+        throw new Error(meData.description || `Invalid Bot Token (HTTP ${meRes.status})`);
       }
       const botUsername = meData.result?.username || 'bot';
 
@@ -1349,7 +1411,7 @@
       );
       const updData = await updRes.json().catch(() => ({}));
       if (!updRes.ok || updData.ok === false) {
-        throw new Error(updData.description || `Gagal membaca getUpdates (HTTP ${updRes.status})`);
+        throw new Error(updData.description || `Failed to read getUpdates (HTTP ${updRes.status})`);
       }
 
       const seenChats = new Map();
@@ -1381,7 +1443,7 @@
         .map((s) => s.trim())
         .filter(Boolean);
       if (!cleanToken || cleanChats.length === 0) {
-        throw new Error('Isi Telegram Bot Token dan Chat ID terlebih dahulu.');
+        throw new Error('Enter both Telegram Bot Token and Chat ID first.');
       }
 
       for (const cid of cleanChats) {
@@ -1390,10 +1452,10 @@
           parse_mode: 'HTML',
           disable_web_page_preview: 'true',
           text: [
-            '🔔 <b>DailyUploads Radar Cloud — Test Berhasil!</b>',
+            '🔔 <b>DailyUploads Radar Cloud — Test Successful!</b>',
             '',
-            'Koneksi Bot Token &amp; Chat ID kamu valid.',
-            'Simpan kedua nilai ini ke <b>GitHub Repository Secrets</b> (<code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code>) agar GitHub Actions mengirim notifikasi update 24/7 otomatis!',
+            'Your Bot Token &amp; Chat ID connection is valid.',
+            'Save both values to <b>GitHub Repository Secrets</b> (<code>TELEGRAM_BOT_TOKEN</code> &amp; <code>TELEGRAM_CHAT_ID</code>) so GitHub Actions sends 24/7 update notifications automatically!',
           ].join('\n'),
         });
         const res = await this.fetchFn(
@@ -1411,20 +1473,20 @@
     async sendWebhookBrowserTest(webhookUrl) {
       const cleanUrl = String(webhookUrl || '').trim();
       if (!cleanUrl) {
-        throw new Error('Isi Webhook URL terlebih dahulu.');
+        throw new Error('Enter a Webhook URL first.');
       }
       const isDiscord = /discord(?:app)?\.com\/api\/webhooks\//i.test(cleanUrl);
       const payload = isDiscord
         ? {
             username: 'DailyUploads Radar',
-            content: '🔔 **DailyUploads Radar Cloud — Test Webhook Berhasil!**',
+            content: '🔔 **DailyUploads Radar Cloud — Webhook Test Successful!**',
             embeds: [
               {
                 title: 'Spotify-Shrubify (v9.2.1 → v9.2.2)',
                 url: 'https://dailyuploads.net/users/user_hidden',
                 color: 0x3b82f6,
                 description:
-                  'Simpan URL Webhook ini sebagai `WEBHOOK_URL` di **GitHub Repository Secrets** untuk notifikasi otomatis 24/7!',
+                  'Save this Webhook URL as `WEBHOOK_URL` in **GitHub Repository Secrets** for automated 24/7 update alerts!',
               },
             ],
           }

@@ -71,14 +71,19 @@ function decodePercentEncoded(str) {
 }
 
 function parseOsToken(token) {
-  // e.g. os150 -> 15.0, os161 -> 16.1, os144 -> 14.4, os90 -> 9.0, os270 -> 27.0, os1510 -> 15.1, os1500 -> 15.0
+  // e.g. os15 -> 15.0, os90 -> 9.0, os150 -> 15.0, os161 -> 16.1, os144 -> 14.4, os270 -> 27.0, os1510 -> 15.1, os1500 -> 15.0
   const m1 = String(token).match(/^os(\d{2,4})$/i);
   if (m1) {
     const digits = m1[1];
     if (digits.length === 2) {
-      const major = Number.parseInt(digits[0], 10);
-      const minor = Number.parseInt(digits[1], 10);
-      return Number(`${major}.${minor}`);
+      const num = Number.parseInt(digits, 10);
+      // os60..os99 denote iOS 6.0..9.9 (e.g. os80 -> 8.0, os90 -> 9.0); os10..os59 denote major iOS 10..59 (e.g. os15 -> 15.0, os18 -> 18.0)
+      if (num >= 60) {
+        const major = Number.parseInt(digits[0], 10);
+        const minor = Number.parseInt(digits[1], 10);
+        return Number(`${major}.${minor}`);
+      }
+      return num;
     }
     if (digits.length === 3 || digits.length === 4) {
       const major = Number.parseInt(digits.slice(0, 2), 10);
@@ -169,10 +174,24 @@ function parseFilename(rawFilename) {
   let minIos = null;
   let releaseGroup = '';
 
-  // 1. Split extension
-  const lastDot = filename.lastIndexOf('.');
-  const extension = lastDot > 0 ? filename.slice(lastDot + 1).toLowerCase() : '';
-  let base = lastDot > 0 ? filename.slice(0, lastDot) : filename;
+  // 1. Split extension (including multi-part split archives like .zip.001, .rar.002, .7z.004)
+  let extension = '';
+  let base = filename;
+  const splitArchiveMatch = filename.match(/^(.+)\.(zip|rar|7z|tar|gz|iso|dmg|pkg)\.(\d{3})$/i);
+  if (splitArchiveMatch) {
+    base = splitArchiveMatch[1];
+    extension = splitArchiveMatch[2].toLowerCase();
+    tags.add(`Part ${splitArchiveMatch[3]}`);
+  } else {
+    const lastDot = filename.lastIndexOf('.');
+    extension = lastDot > 0 ? filename.slice(lastDot + 1).toLowerCase() : '';
+    base = lastDot > 0 ? filename.slice(0, lastDot) : filename;
+  }
+
+  // Handle accidental duplicate extension suffix like Husk_3.2.1ipa.ipa
+  if (extension && new RegExp(`(\\d)${extension}$`, 'i').test(base)) {
+    base = base.slice(0, -extension.length);
+  }
 
   const platform = inferPlatform(extension, filename);
 
@@ -323,7 +342,9 @@ function parseFilename(rawFilename) {
 
     // Extract version from the end of `base`
     // Case 1: explicit v-prefixed version e.g. .v2.16, -v5.4.5, -v1.0.0-beta.2, _v2026.11.21, -v2, .v1097911
-    const vPrefixed = base.match(/[-_. ]v(\d+(?:\.\d+)*(?:[-.][a-zA-Z0-9]+)*)$/);
+    const vPrefixed = base.match(
+      /[-_. ]v(\d+(?:\.\d+)*(?:[ab]\d*|[-.](?:alpha|beta|rc|pre|dev|build)[.-]?\d*|-\d{1,8})*)$/i
+    );
     // Case 2: numeric dotted version at end e.g. _0.8.1, -0.2.27, _3.25, _0.20.1a, _0.1.3-20261031
     const numDotted = !vPrefixed
       ? base.match(/[-_. ](\d+(?:\.\d+)+(?:[a-z]\d*|[-.](?:beta|alpha|rc|b|a|pre)\d*|-\d{1,8})?)$/i)
@@ -334,6 +355,15 @@ function parseFilename(rawFilename) {
     const buildM = !vPrefixed && !numDotted && !numUnderscore ? base.match(/[-_. ]build[-_. ]?(\d+)$/i) : null;
     // Case 5: enUS_<number> e.g. 868_Back_enUS_263
     const enUsNum = !vPrefixed && !numDotted && !numUnderscore && !buildM ? base.match(/_enUS_(\d+)$/i) : null;
+    // Case 6: short build tag _b1 / -b2 or 7-8 char git commit hash e.g. TermX-e543723
+    const shortBuildM =
+      !vPrefixed && !numDotted && !numUnderscore && !buildM && !enUsNum
+        ? base.match(/[-_]b(\d{1,4})$/i)
+        : null;
+    const gitHashM =
+      !vPrefixed && !numDotted && !numUnderscore && !buildM && !enUsNum && !shortBuildM
+        ? base.match(/[-_]((?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,8})$/i)
+        : null;
 
     if (vPrefixed) {
       version = vPrefixed[1];
@@ -350,17 +380,27 @@ function parseFilename(rawFilename) {
     } else if (enUsNum) {
       version = enUsNum[1];
       base = base.slice(0, enUsNum.index);
+    } else if (shortBuildM) {
+      version = `Build ${shortBuildM[1]}`;
+      base = base.slice(0, shortBuildM.index);
+    } else if (gitHashM) {
+      version = gitHashM[1].toLowerCase();
+      base = base.slice(0, gitHashM.index);
     } else {
-      // Fallback: inline version followed by suffix tags e.g. Stremio_2.1.2-27_tvOS, Tetherless-1.2.5-Modern, ZGTA-V-2.0.0b4-Build109
+      // Fallback: inline version followed by suffix tags e.g. Stremio_2.1.2-27_tvOS, Tetherless-1.2.5-Modern, Logos.Bible.Software.v7.4.0.51.Incl.Libros
       const inlineVer = base.match(
         /[-_. ]v?(\d+\.\d+(?:\.\d+)*(?:[ab]\d+|[-.](?:beta|alpha|rc|pre)[.-]?\d*|-\d{1,5})?)(?=[-_. ][a-zA-Z])/i
       );
       if (inlineVer && inlineVer.index > 0) {
         version = inlineVer[1];
-        const suffix = base.slice(inlineVer.index + inlineVer[0].length).replace(/^[-_. ]+/, '');
+        let suffix = base.slice(inlineVer.index + inlineVer[0].length).replace(/^[-_. ]+/, '');
         base = base.slice(0, inlineVer.index);
-        for (const tok of suffix.split(/[-_]+/).filter(Boolean)) {
-          if (/^(release|ios|full)$/i.test(tok)) {
+        if (/\bIncl[._ -]DLC\b/i.test(suffix)) {
+          tags.add('Incl. DLC');
+          suffix = suffix.replace(/\bIncl[._ -]DLC\b/gi, '');
+        }
+        for (const tok of suffix.split(/[-_. ]+/).filter(Boolean)) {
+          if (/^(release|ios|full|incl)$/i.test(tok)) {
             if (/^full$/i.test(tok)) tags.add('Full');
           } else if (tok.length <= 24 && !/^\d{4}\.\d{2}\.\d{2}$/.test(tok)) {
             tags.add(normalizeTagLabel(tok));

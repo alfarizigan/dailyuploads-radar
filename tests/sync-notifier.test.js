@@ -169,6 +169,19 @@ test('TelegramBotRunner handles /search, /watch, /watchlist, and inline watch ca
     // /watch@MyBotName Spotify adds keyword watch
     await bot.handleUpdate('TOK', { message: { chat: { id: 42 }, text: '/watch@RadarBot Spotify' } });
     assert.ok(db.listWatchlist().some((w) => w.watch_type === 'keyword' && w.keyword === 'Spotify'));
+
+    // /unwatch without args returns usage hint
+    await bot.handleUpdate('TOK', { message: { chat: { id: 42 }, text: '/unwatch' } });
+    assert.ok(sent[sent.length - 1].body.text.includes('/unwatch Spotify'));
+
+    // /unwatch removes matching rule by keyword or slug
+    await bot.handleUpdate('TOK', { message: { chat: { id: 42 }, text: '/unwatch spotify' } });
+    assert.ok(!db.listWatchlist().some((w) => w.keyword === 'Spotify'));
+    assert.ok(sent[sent.length - 1].body.text.includes('Removed'));
+
+    // Unknown slash command replies with /help hint instead of silent drop
+    await bot.handleUpdate('TOK', { message: { chat: { id: 42 }, text: '/nonexistent' } });
+    assert.ok(sent[sent.length - 1].body.text.includes('/help'));
   } finally {
     db.close();
   }

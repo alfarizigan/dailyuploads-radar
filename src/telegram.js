@@ -2,17 +2,18 @@
 
 const { config } = require('./config');
 const { escapeTelegramHtml } = require('./notifier');
-const { formatBytes } = require('./parser');
+const { formatBytes, slugifyAppName } = require('./parser');
 
 const BOT_COMMANDS = [
-  { command: 'search', description: 'Cari aplikasi (contoh: /search spotify)' },
-  { command: 'latest', description: 'Lihat upload terbaru' },
-  { command: 'watch', description: 'Pantau keyword/app (contoh: /watch lumafusion)' },
-  { command: 'watchlist', description: 'Daftar aplikasi yang dipantau' },
-  { command: 'updates', description: 'Lihat notifikasi update terbaru' },
-  { command: 'sync', description: 'Sinkronisasi sekarang dari DailyUploads' },
-  { command: 'stats', description: 'Statistik katalog' },
-  { command: 'help', description: 'Panduan perintah bot' },
+  { command: 'search', description: 'Search apps (e.g. /search spotify)' },
+  { command: 'latest', description: 'Show latest uploads' },
+  { command: 'watch', description: 'Watch a keyword or app (e.g. /watch lumafusion)' },
+  { command: 'unwatch', description: 'Remove a watch rule (e.g. /unwatch lumafusion)' },
+  { command: 'watchlist', description: 'List & manage watched apps' },
+  { command: 'updates', description: 'Show recent update notifications' },
+  { command: 'sync', description: 'Check DailyUploads for new uploads now' },
+  { command: 'stats', description: 'Show catalog statistics' },
+  { command: 'help', description: 'Show bot command guide' },
 ];
 
 class TelegramBotRunner {
@@ -253,27 +254,28 @@ class TelegramBotRunner {
     if (/^\/(?:start|help)(?:@\S+)?(?:\s|$)/i.test(text)) {
       const authNote = this.isAuthorizedChat(chatId)
         ? ''
-        : `\n⚠️ <i>Chat ID kamu belum terdaftar di Settings / GitHub Secrets. Masukkan Chat ID di bawah ini ke TELEGRAM_CHAT_ID.</i>`;
+        : `\n⚠️ <i>Your Chat ID is not authorized yet in Settings / GitHub Secrets. Add the Chat ID below to TELEGRAM_CHAT_ID.</i>`;
       const env = typeof config.getEnvOverrides === 'function' ? config.getEnvOverrides() : {};
       const webUrl = env.cloud_web_url || config.cloudWebUrl || '';
       const webLine = webUrl
-        ? `\n🌐 <b>Web Searcher Instan (24/7):</b> <a href="${escapeTelegramHtml(webUrl)}">Buka DailyUploads Radar Web</a>\n`
+        ? `\n🌐 <b>Instant Web Searcher (24/7):</b> <a href="${escapeTelegramHtml(webUrl)}">Open DailyUploads Radar Web</a>\n`
         : '';
       await this.sendReply(
         token,
         chatId,
         [
           `🛰️ <b>DailyUploads Radar Bot</b>`,
-          `Chat ID kamu: <code>${chatId}</code>${authNote}${webLine}`,
+          `Your Chat ID: <code>${chatId}</code>${authNote}${webLine}`,
           ``,
-          `<b>Perintah tersedia:</b>`,
-          `• <code>/search &lt;kata kunci&gt;</code> — Cari aplikasi (atau langsung ketik nama app!)`,
-          `• <code>/latest</code> — 8 upload terbaru`,
-          `• <code>/watch &lt;keyword&gt;</code> — Tambah pantauan notifikasi update`,
-          `• <code>/watchlist</code> — Lihat & kelola daftar pantauan`,
-          `• <code>/updates</code> — Lihat riwayat notifikasi update`,
-          `• <code>/sync</code> — Cek upload baru dari DailyUploads sekarang`,
-          `• <code>/stats</code> — Ringkasan jumlah file & aplikasi`,
+          `<b>Available commands:</b>`,
+          `• <code>/search &lt;query&gt;</code> — Search apps (or simply send any app name!)`,
+          `• <code>/latest</code> — Show 8 newest uploads`,
+          `• <code>/watch &lt;keyword&gt;</code> — Add an update watch rule`,
+          `• <code>/unwatch &lt;name or id&gt;</code> — Remove a watch rule`,
+          `• <code>/watchlist</code> — View & manage your watchlist`,
+          `• <code>/updates</code> — View recent update notifications`,
+          `• <code>/sync</code> — Check DailyUploads for new uploads now`,
+          `• <code>/stats</code> — Catalog summary & statistics`,
         ].join('\n')
       );
       return;
@@ -283,40 +285,40 @@ class TelegramBotRunner {
       await this.sendReply(
         token,
         chatId,
-        `🔒 Akses dibatasi. Chat ID kamu: <code>${chatId}</code>. Tambahkan di Settings Web UI jika ingin mengizinkan chat ini.`
+        `🔒 Access restricted. Your Chat ID is <code>${chatId}</code>. Add it to TELEGRAM_CHAT_ID in Settings or GitHub Secrets to authorize this chat.`
       );
       return;
     }
 
     if (/^\/latest(?:@\S+)?(?:\s|$)/i.test(text)) {
       const res = this.db.searchFiles({ sort: 'newest', limit: 8, grouped: true });
-      await this.sendSearchResults(token, chatId, '🆕 Upload Terbaru', res);
+      await this.sendSearchResults(token, chatId, '🆕 Latest Uploads', res);
       return;
     }
 
     if (/^\/search(?:@\S+)?(?:\s|$)/i.test(text)) {
       const query = text.replace(/^\/search(?:@\S+)?\s*/i, '').trim();
       if (!query) {
-        await this.sendReply(token, chatId, 'Ketik: <code>/search spotify</code> atau langsung kirim nama aplikasinya.');
+        await this.sendReply(token, chatId, 'Usage: <code>/search spotify</code> (or just type the app name directly).');
         return;
       }
       const res = this.db.searchFiles({ q: query, sort: 'newest', limit: 8, grouped: true });
-      await this.sendSearchResults(token, chatId, `🔍 Hasil untuk "${escapeTelegramHtml(query)}"`, res);
+      await this.sendSearchResults(token, chatId, `🔍 Results for "${escapeTelegramHtml(query)}"`, res);
       return;
     }
 
     if (/^\/watchlist(?:@\S+)?(?:\s|$)/i.test(text)) {
       const list = this.db.listWatchlist();
       if (list.length === 0) {
-        await this.sendReply(token, chatId, '📭 Watchlist masih kosong. Gunakan <code>/watch NamaApp</code> atau klik tombol Watch pada hasil pencarian.');
+        await this.sendReply(token, chatId, '📭 Your watchlist is empty. Use <code>/watch AppName</code> or tap the Watch button on any search result.');
         return;
       }
-      const lines = [`⭐ <b>Watchlist Kamu (${list.length})</b>\n`];
+      const lines = [`⭐ <b>Your Watchlist (${list.length})</b>\n`];
       const keyboard = [];
       for (const w of list.slice(0, 15)) {
         const ver = w.latest_file?.version ? `v${w.latest_file.version}` : w.last_known_version ? `v${w.last_known_version}` : '-';
-        lines.push(`• <b>${escapeTelegramHtml(w.display_name)}</b> (${w.watch_type}) — Terbaru: <code>${escapeTelegramHtml(ver)}</code>`);
-        keyboard.push([{ text: `🗑 Hapus: ${w.display_name.slice(0, 28)}`, callback_data: `unwatch_id:${w.id}` }]);
+        lines.push(`• <b>${escapeTelegramHtml(w.display_name)}</b> (${w.watch_type}) — Latest: <code>${escapeTelegramHtml(ver)}</code>`);
+        keyboard.push([{ text: `🗑 Remove: ${w.display_name.slice(0, 28)}`, callback_data: `unwatch_id:${w.id}` }]);
       }
       await this.sendReply(token, chatId, lines.join('\n'), {
         reply_markup: { inline_keyboard: keyboard },
@@ -324,10 +326,43 @@ class TelegramBotRunner {
       return;
     }
 
+    if (/^\/unwatch(?:@\S+)?(?:\s|$)/i.test(text)) {
+      const target = text.replace(/^\/unwatch(?:@\S+)?\s*/i, '').trim();
+      if (!target) {
+        await this.sendReply(token, chatId, 'Usage: <code>/unwatch Spotify</code> (or use <code>/watchlist</code> to remove with a button).');
+        return;
+      }
+      const list = this.db.listWatchlist();
+      const targetLower = target.toLowerCase();
+      const targetSlug = slugifyAppName(target);
+      const asId = /^\d+$/.test(target) ? Number.parseInt(target, 10) : NaN;
+      const matches = list.filter(
+        (w) =>
+          (Number.isFinite(asId) && w.id === asId) ||
+          String(w.display_name || '').toLowerCase() === targetLower ||
+          String(w.keyword || '').toLowerCase() === targetLower ||
+          (w.target_slug && (w.target_slug === targetLower || w.target_slug === targetSlug))
+      );
+      if (matches.length === 0) {
+        await this.sendReply(
+          token,
+          chatId,
+          `ℹ️ No watch rule found matching <b>${escapeTelegramHtml(target)}</b>. Send <code>/watchlist</code> to view active rules.`
+        );
+        return;
+      }
+      for (const m of matches) {
+        this.db.removeWatch(m.id);
+      }
+      const removedNames = matches.map((m) => escapeTelegramHtml(m.display_name)).join(', ');
+      await this.sendReply(token, chatId, `🔕 Removed <b>${removedNames}</b> from your watchlist.`);
+      return;
+    }
+
     if (/^\/watch(?:@\S+)?(?:\s|$)/i.test(text)) {
       const kw = text.replace(/^\/watch(?:@\S+)?\s*/i, '').trim();
       if (!kw) {
-        await this.sendReply(token, chatId, 'Contoh: <code>/watch Spotify</code>');
+        await this.sendReply(token, chatId, 'Example: <code>/watch Spotify</code>');
         return;
       }
       const { item, created } = this.db.addWatch({
@@ -339,8 +374,8 @@ class TelegramBotRunner {
         token,
         chatId,
         created
-          ? `🔔 Berhasil memantau keyword <b>${escapeTelegramHtml(item.display_name)}</b>! Kamu akan menerima notifikasi otomatis jika ada upload baru yang cocok.`
-          : `ℹ️ Keyword <b>${escapeTelegramHtml(item.display_name)}</b> sudah ada di watchlist.`
+          ? `🔔 Now watching keyword <b>${escapeTelegramHtml(item.display_name)}</b>! You will receive automatic alerts whenever a matching upload arrives.`
+          : `ℹ️ Keyword <b>${escapeTelegramHtml(item.display_name)}</b> is already on your watchlist.`
       );
       return;
     }
@@ -348,10 +383,10 @@ class TelegramBotRunner {
     if (/^\/updates(?:@\S+)?(?:\s|$)/i.test(text)) {
       const { items } = this.db.listAlerts({ limit: 8 });
       if (items.length === 0) {
-        await this.sendReply(token, chatId, '📭 Belum ada notifikasi update yang tercatat.');
+        await this.sendReply(token, chatId, '📭 No update notifications recorded yet.');
         return;
       }
-      const lines = ['🔔 <b>Update Terbaru Terdeteksi</b>\n'];
+      const lines = ['🔔 <b>Recent Detected Updates</b>\n'];
       for (const a of items) {
         const diff = a.old_version && a.new_version ? `v${a.old_version} → v${a.new_version}` : a.new_version ? `v${a.new_version}` : 'New';
         lines.push(
@@ -364,16 +399,16 @@ class TelegramBotRunner {
 
     if (/^\/sync(?:@\S+)?(?:\s|$)/i.test(text)) {
       if (!this.syncManager) {
-        await this.sendReply(token, chatId, 'ℹ️ Engine sinkronisasi belum tersedia.');
+        await this.sendReply(token, chatId, 'ℹ️ Sync engine is not available.');
         return;
       }
-      await this.sendReply(token, chatId, '🔄 Memulai quick sync dari DailyUploads...');
+      await this.sendReply(token, chatId, '🔄 Starting quick sync from DailyUploads...');
       const results = await this.syncManager.syncAllSources({ mode: 'quick' });
       this.manualSyncResults = results;
-      const lines = ['✅ <b>Sync Selesai</b>'];
+      const lines = ['✅ <b>Sync Complete</b>'];
       for (const r of results) {
         if (r.ok) {
-          lines.push(`• <b>${escapeTelegramHtml(r.sourceUser)}</b>: ${r.totalFetched} dicek, <b>${r.newFilesCount} file baru</b>, ${r.alertsTriggered} alert (${(r.durationMs / 1000).toFixed(1)}s)`);
+          lines.push(`• <b>${escapeTelegramHtml(r.sourceUser)}</b>: ${r.totalFetched} checked, <b>+${r.newFilesCount} new</b>, ${r.alertsTriggered} alerts (${(r.durationMs / 1000).toFixed(1)}s)`);
         } else {
           lines.push(`• <b>${escapeTelegramHtml(r.sourceUser)}</b>: ❌ ${escapeTelegramHtml(r.error)}`);
         }
@@ -388,30 +423,36 @@ class TelegramBotRunner {
         token,
         chatId,
         [
-          `📊 <b>Statistik DailyUploads Radar</b>`,
-          `• Total File: <b>${st.total_files.toLocaleString()}</b>`,
-          `• Total Aplikasi Unik: <b>${st.total_apps.toLocaleString()}</b>`,
-          `• Total Ukuran Katalog: <b>${formatBytes(st.total_size_bytes)}</b>`,
-          `• Upload Hari Ini: <b>${st.uploaded_today || 0}</b> | 7 Hari: <b>${st.uploaded_week || 0}</b>`,
-          `• Aplikasi Dipantau: <b>${st.watchlist_count}</b> | Alert Belum Dibaca: <b>${st.unread_alerts}</b>`,
+          `📊 <b>DailyUploads Radar Statistics</b>`,
+          `• Total Files: <b>${st.total_files.toLocaleString()}</b>`,
+          `• Unique Apps: <b>${st.total_apps.toLocaleString()}</b>`,
+          `• Total Catalog Size: <b>${formatBytes(st.total_size_bytes)}</b>`,
+          `• Uploaded Today: <b>${st.uploaded_today || 0}</b> | Last 7 Days: <b>${st.uploaded_week || 0}</b>`,
+          `• Watched Rules: <b>${st.watchlist_count}</b> | Unread Alerts: <b>${st.unread_alerts}</b>`,
         ].join('\n')
       );
       return;
     }
 
-    // Plain text = instant search!
+    // Plain text = instant search; unknown slash command = helpful hint
     if (!text.startsWith('/')) {
       const res = this.db.searchFiles({ q: text, sort: 'newest', limit: 8, grouped: true });
-      await this.sendSearchResults(token, chatId, `🔍 Hasil untuk "${escapeTelegramHtml(text)}"`, res);
+      await this.sendSearchResults(token, chatId, `🔍 Results for "${escapeTelegramHtml(text)}"`, res);
+    } else {
+      await this.sendReply(
+        token,
+        chatId,
+        '❓ Unknown command. Send <code>/help</code> to see available commands, or type any app name to search.'
+      );
     }
   }
 
   async sendSearchResults(token, chatId, header, res) {
     if (!res.items || res.items.length === 0) {
-      await this.sendReply(token, chatId, `${header}\n\n❌ Tidak ditemukan aplikasi yang cocok.`);
+      await this.sendReply(token, chatId, `${header}\n\n❌ No matching apps found.`);
       return;
     }
-    const lines = [`${header} <i>(menampilkan ${res.items.length} dari ${res.total})</i>\n`];
+    const lines = [`${header} <i>(showing ${res.items.length} of ${res.total})</i>\n`];
     const keyboard = [];
 
     for (const item of res.items) {
@@ -422,7 +463,7 @@ class TelegramBotRunner {
       lines.push(
         `📦 <b>${escapeTelegramHtml(item.app_name)}</b> <code>${escapeTelegramHtml(ver)}</code>${vCount}`,
         `   ${escapeTelegramHtml(item.platform)} • ${escapeTelegramHtml(item.size_text)}${escapeTelegramHtml(ios)} • ${age} • ⬇️${item.downloads}`,
-        `   <a href="${escapeTelegramHtml(item.download_url)}">Download di DailyUploads</a>\n`
+        `   <a href="${escapeTelegramHtml(item.download_url)}">Download on DailyUploads</a>\n`
       );
       // Use compact file_code in callback_data to stay well within Telegram's 64-byte limit even for long app_slugs
       keyboard.push([
@@ -460,50 +501,50 @@ class TelegramBotRunner {
           target_slug: file.app_slug,
           display_name: file.app_name,
         });
-        toast = `🔔 Memantau ${item.display_name}`;
-        replyHtml = `🔔 Berhasil memantau aplikasi <b>${escapeTelegramHtml(item.display_name)}</b>!`;
+        toast = `🔔 Watching ${item.display_name}`;
+        replyHtml = `🔔 Now watching <b>${escapeTelegramHtml(item.display_name)}</b>!`;
         buttonReplacement = {
           text: `🔕 Unwatch ${item.display_name.slice(0, 22)}`,
           callback_data: `unwatch_fc:${code}`,
         };
       } else {
-        toast = '❌ File tidak ditemukan di katalog';
-        replyHtml = '❌ File tidak ditemukan di katalog.';
+        toast = '❌ File not found in catalog';
+        replyHtml = '❌ File not found in catalog.';
       }
     } else if (data.startsWith('unwatch_fc:')) {
       const code = data.slice('unwatch_fc:'.length);
       const file = this.db.getFileByCode(code);
       if (file) {
         this.db.removeWatchBySlug(file.app_slug);
-        replyHtml = `🔕 Berhenti memantau <b>${escapeTelegramHtml(file.app_name)}</b>.`;
+        replyHtml = `🔕 Stopped watching <b>${escapeTelegramHtml(file.app_name)}</b>.`;
         buttonReplacement = {
           text: `🔔 Watch ${file.app_name.slice(0, 22)}`,
           callback_data: `watch_fc:${code}`,
         };
       } else {
-        replyHtml = '🔕 Berhenti memantau.';
+        replyHtml = '🔕 Stopped watching.';
       }
-      toast = '🔕 Berhenti memantau';
+      toast = '🔕 Unwatched';
     } else if (data.startsWith('watch_slug:')) {
       const slug = data.slice('watch_slug:'.length);
       const { item } = this.db.addWatch({ watch_type: 'app', target_slug: slug });
-      toast = `🔔 Memantau ${item.display_name}`;
-      replyHtml = `🔔 Berhasil memantau <b>${escapeTelegramHtml(item.display_name)}</b>!`;
+      toast = `🔔 Watching ${item.display_name}`;
+      replyHtml = `🔔 Now watching <b>${escapeTelegramHtml(item.display_name)}</b>!`;
     } else if (data.startsWith('unwatch_slug:')) {
       const slug = data.slice('unwatch_slug:'.length);
       this.db.removeWatchBySlug(slug);
-      toast = '🔕 Berhenti memantau';
-      replyHtml = `🔕 Berhenti memantau <code>${escapeTelegramHtml(slug)}</code>.`;
+      toast = '🔕 Unwatched';
+      replyHtml = `🔕 Stopped watching <code>${escapeTelegramHtml(slug)}</code>.`;
     } else if (data.startsWith('unwatch_id:')) {
       const id = Number.parseInt(data.slice('unwatch_id:'.length), 10);
       const existing = Number.isFinite(id)
         ? this.db.listWatchlist().find((w) => w.id === id)
         : null;
       if (Number.isFinite(id)) this.db.removeWatch(id);
-      toast = '🗑 Dihapus dari watchlist';
+      toast = '🗑 Removed from watchlist';
       replyHtml = existing
-        ? `🗑 <b>${escapeTelegramHtml(existing.display_name)}</b> dihapus dari watchlist.`
-        : '🗑 Dihapus dari watchlist.';
+        ? `🗑 Removed <b>${escapeTelegramHtml(existing.display_name)}</b> from your watchlist.`
+        : '🗑 Removed from your watchlist.';
       removeRowByCallback = true;
     }
 

@@ -1,49 +1,51 @@
 # 🛰️ DailyUploads Radar (Cloud + Local)
 
-**Smart Searcher, Filter, Sort, Version Tracker, Update Notifier + Interactive Telegram Bot** untuk katalog DailyUploads (pre-configured untuk [`https://dailyuploads.net/users/user_hidden`](https://dailyuploads.net/users/user_hidden)).
+**Instant App Searcher, Filter, Version Tracker, 24/7 Update Notifier & Interactive Telegram Bot** for DailyUploads catalogs (pre-configured for [`https://dailyuploads.net/users/user_hidden`](https://dailyuploads.net/users/user_hidden)).
 
-🌐 **Live Cloud Web App (24/7 Instan Tanpa PC):**  
+🌐 **Live Cloud Web App (24/7 Instant Search — Zero Local Server Required):**  
 👉 **[https://alfarizigan.github.io/dailyuploads-radar/](https://alfarizigan.github.io/dailyuploads-radar/)**
 
-⚡ **Cloud Auto-Sync Engine:**  
-Berjalan otomatis di **GitHub Actions** setiap ~15 menit (Quick Sync ~2 detik + Full Sync otomatis tiap 24 jam) — **100% gratis di cloud tanpa perlu menyalakan PC/server sendiri!**
+⚡ **Serverless Cloud Auto-Sync Architecture:**  
+Runs automatically on **GitHub Actions** (`7,22,37,52 * * * *` staggered 15-minute schedule: lightweight Quick Sync ~2s + automatic Full Sync every 24h), persisting compact state to the orphan `radar-state` branch without polluting `main` commit history.
 
 ---
 
-## ✨ Fitur Utama
+## ✨ Key Features
 
-1. **Instant Search, Filter & Sort (Cloud Web UI & Local SQLite FTS5)**
-   - Cari ribuan file dalam hitungan milidetik (`/` untuk langsung fokus ke kolom pencarian).
-   - Otomatis mengekstrak nama aplikasi, versi (`v9.2.2`, `0.8.1`, `3.25`, `Build 11`), platform (`iOS`, `macOS`, `Windows`, `Archive`), format (`.ipa`, `.dmg`, `.pkg`, `.tipa`, `.zip`, `.deb`, `.exe`), Minimum iOS (`os150` → `iOS 15.0+`), ukuran, jumlah download, usia upload, dan tag (`VIP`, `Pro`, `Subscribed`, `Unsigned`, `Universal`, `iPad`, `TNT`, `MacKed`, `Incl. DLC`, `TrollStore`).
-   - **Group by App**: Menggabungkan beberapa versi/build dari aplikasi yang sama menjadi 1 kartu rapi + modal **Detail & Riwayat Versi** (`N builds`).
-   - Tampilan **Card Grid** maupun **Compact Table**, plus **Export CSV / JSON**.
+1. **Instant Search, Multi-Facet Filter & Sort (Cloud Web UI & Local SQLite FTS5)**
+   - Search thousands of files in milliseconds (`/` keyboard shortcut to focus search, URL query deep-linking & 1-click shareable filter links).
+   - Smart filename parser extracts clean app names, semantic/build/commit versions (`v9.2.2`, `0.8.1`, `Build 11`, split archives `.zip.001`), platforms (`iOS`, `macOS`, `Windows`, `Archive`), formats (`.ipa`, `.dmg`, `.pkg`, `.tipa`, `.zip`, `.deb`, `.exe`), Minimum iOS (`os15` / `os161` / `os270` → `iOS 15.0+` / `iOS 16.1+` / `iOS 27.0+`), file sizes, download counts, upload age, and release tags (`VIP`, `Pro`, `Subscribed`, `Unsigned`, `Universal`, `iPad`, `TNT`, `MacKed`, `Incl. DLC`, `TrollStore`).
+   - **Group by App**: Collapses multiple builds/versions of the same app into a single clean card with a **Version History & Details** modal (`N builds`).
+   - **Grid & Compact Table Views**, mobile-optimized responsive layout, PWA home-screen manifest, and **CSV / JSON Export**.
 
-2. **Cloud Auto-Sync & Notifikasi Update 24/7 (GitHub Actions)**
-   - **Zero Git Bloat**: State katalog disimpan dalam format tuple ringkas di orphan branch `radar-state` & `gh-pages` (hanya ~138 KB terkompresi untuk 2.170+ file, tidak menumpuk riwayat commit di `main`).
-   - **Watchlist Fleksibel**:
-     - Pantau aplikasi spesifik atau keyword bebas (`Spotify`, `YouTube`, `Procreate`, dll.).
-     - Bisa ditambahkan lewat **Bot Telegram** (`/watch NamaApp` atau tombol inline `🔔 Watch`), lewat file [`watchlist.json`](./watchlist.json), maupun langsung dari **Cloud Web UI**.
-   - **Multi-Channel Push Alert**:
-     - **Telegram Bot** (Push notifikasi otomatis lengkap dengan perbandingan versi `v9.2.1 → v9.2.2` + link download, sekaligus menerima perintah `/search`, `/latest`, `/watch`, `/watchlist`, `/updates`, `/sync`, `/stats`).
-     - **Discord / Generic Webhook** (otomatis format Discord Embed).
+2. **Zero-Cache Cloud Sync & 24/7 Update Notifications**
+   - **Zero Git Bloat**: Catalog state is stored in a compact tuple format on the orphan `radar-state` branch (~138 KB compressed for 2,160+ files).
+   - **Zero-Stale-Cache Refresh**: Manual refresh and tab-resume resolve the exact head commit SHA on `radar-state` (with multi-CDN fallback across GitHub Raw, jsDelivr, and GitHub Pages) so fresh syncs appear immediately without waiting for CDN branch-cache expiry.
+   - **Flexible Watchlist**:
+     - Watch specific apps or free-form keywords (`Spotify`, `YouTube`, `Procreate`, etc.) with optional platform filters.
+     - Manage rules via **Telegram Bot** (`/watch`, `/unwatch`, `/watchlist`, or inline `🔔 Watch` buttons), declarative [`watchlist.json`](./watchlist.json), or directly from the **Cloud Web UI**.
+   - **Multi-Channel Push Alerts**:
+     - **Telegram Bot**: Automatic push notifications with version diffs (`v9.2.1 → v9.2.2`) + direct download links, plus interactive commands (`/search`, `/latest`, `/watch`, `/unwatch`, `/watchlist`, `/updates`, `/sync`, `/stats`).
+     - **Discord / Generic Webhook**: Rich Discord Embeds or standard JSON POST payloads.
 
 ---
 
-## ☁️ Cara Mengaktifkan Notifikasi Telegram / Discord di Cloud (GitHub Actions)
+## ☁️ Setting Up 24/7 Telegram / Discord Push Alerts in Cloud
 
-Katalog Web di **[alfarizigan.github.io/dailyuploads-radar](https://alfarizigan.github.io/dailyuploads-radar/)** sudah langsung aktif dan ter-update otomatis tanpa konfigurasi tambahan!
+The Web Searcher at **[alfarizigan.github.io/dailyuploads-radar](https://alfarizigan.github.io/dailyuploads-radar/)** works out of the box with zero configuration!
 
-Jika ingin menerima **notifikasi otomatis di HP (Telegram / Discord)** saat aplikasi yang ditandai ada update baru:
+To receive **automatic 24/7 mobile push alerts** when watched apps get updated:
 
-1. Buat bot di Telegram lewat **[@BotFather](https://t.me/BotFather)** (`/newbot`) → salin **Bot Token**.
-2. Buka bot kamu di Telegram lalu kirim pesan `/start`. Buka tab **Pengaturan** di Web UI → tempel Bot Token → klik **🔍 Deteksi Chat ID Otomatis** (otomatis mengisi **Chat ID** kamu) → klik **🧪 Test Kirim Telegram** untuk memastikan pesan masuk!
-3. Buka repo ini di GitHub → **Settings** → **Secrets and variables** → **Actions** → klik **New repository secret**:
-   - `TELEGRAM_BOT_TOKEN` = Token dari BotFather
-   - `TELEGRAM_CHAT_ID` = Chat ID Telegram kamu (bisa lebih dari satu, pisahkan dengan koma)
-   - *(Opsional)* `WEBHOOK_URL` = URL Webhook Discord / custom
-4. Selesai! Sekarang kamu bisa:
-   - Mengirim `/watch Spotify` (atau klik tombol `🔔 Watch` pada hasil `/search`) ke Bot Telegram kamu — saat jadwal GitHub Actions berjalan (atau saat kamu klik **Run workflow** di tab **Actions**), bot akan membalas & memantau aplikasi tersebut 24/7!
-   - Atau menambahkan daftar pantauan langsung di file [`watchlist.json`](./watchlist.json), contoh:
+1. Create a Telegram bot via **[@BotFather](https://t.me/BotFather)** (`/newbot`) and copy the **Bot Token**.
+2. Open your bot in Telegram and send `/start`. In the Web UI **Settings** tab, paste your Bot Token → click **🔍 Auto-Detect Chat ID** → click **🧪 Test Telegram** to verify delivery.
+3. In your GitHub repository, go to **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+   - `TELEGRAM_BOT_TOKEN` = Your BotFather token
+   - `TELEGRAM_CHAT_ID` = Your Telegram Chat ID (comma-separated for multiple chats)
+   - *(Optional)* `WEBHOOK_URL` = Discord or custom webhook URL
+4. Add watch rules anytime by:
+   - Sending `/watch Spotify` (or tapping `🔔 Watch` on `/search` results) in Telegram,
+   - Connecting an optional GitHub Personal Access Token in Web Settings for 1-click Web Watchlist sync & live workflow dispatch, or
+   - Editing [`watchlist.json`](./watchlist.json):
      ```json
      [
        { "watch_type": "keyword", "keyword": "Spotify", "platform_filter": "iOS" },
@@ -51,18 +53,20 @@ Jika ingin menerima **notifikasi otomatis di HP (Telegram / Discord)** saat apli
      ]
      ```
 
+> **Note on GitHub Actions `schedule` Timing:** GitHub's free public runner scheduler executes cron jobs on a best-effort basis (typically every 15–30 minutes depending on GitHub platform load, and pauses after 60 days without repository activity). For strict down-to-the-minute 15m execution, you can optionally point a free external scheduler (such as [cron-job.org](https://cron-job.org)) at the GitHub REST API `dispatches` endpoint (`POST /repos/<owner>/<repo>/dispatches` with `{"event_type":"radar-sync"}`).
+
 ---
 
-## 💻 Menjalankan Secara Lokal di PC (Opsional)
+## 💻 Running Locally on PC (Optional)
 
-Jika sewaktu-waktu ingin dijalankan sebagai server lokal dengan *long-polling* instan & Windows Native Toast:
+For instant real-time Telegram long-polling, SSE live progress streaming, and native Windows Toast notifications:
 
 ```powershell
 npm start
-# Buka http://localhost:3456
+# Open http://localhost:3456
 ```
 
-## 🧪 Menjalankan Automated Tests
+## 🧪 Running Automated Tests
 
 ```powershell
 npm test

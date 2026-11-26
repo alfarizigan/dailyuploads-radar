@@ -92,11 +92,27 @@ test('HTTP API end-to-end integration test', async () => {
     const srcData = await srcAdd.json();
     assert.equal(srcData.source.username, 'another_user');
 
-    // 7. Static HTML served properly
+    // 7. Static HTML, SVG icon & PWA manifest served properly, and all app.js DOM IDs exist in index.html
     const htmlRes = await fetch(`${app.url}/`);
     assert.equal(htmlRes.status, 200);
     const html = await htmlRes.text();
     assert.ok(html.includes('DailyUploads Radar'));
+    assert.ok(html.includes('<html lang="en"'));
+
+    const iconRes = await fetch(`${app.url}/icon.svg`);
+    assert.equal(iconRes.status, 200);
+    assert.ok((iconRes.headers.get('content-type') || '').includes('image/svg+xml'));
+
+    const manifestRes = await fetch(`${app.url}/manifest.webmanifest`);
+    assert.equal(manifestRes.status, 200);
+    assert.ok((manifestRes.headers.get('content-type') || '').includes('application/manifest+json'));
+
+    const appJsRes = await fetch(`${app.url}/app.js`);
+    const appJs = await appJsRes.text();
+    const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+    const jsIds = new Set([...appJs.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]));
+    const missingIds = [...jsIds].filter((id) => !htmlIds.has(id));
+    assert.deepEqual(missingIds, [], 'Every DOM ID referenced in public/app.js must exist in public/index.html');
 
     // 8. Path traversal check (cannot read package.json outside public/)
     const travRes = await fetch(`${app.url}/..%2Fpackage.json`);

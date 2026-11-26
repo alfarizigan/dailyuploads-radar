@@ -74,9 +74,9 @@ class Notifier {
             .slice(0, 3)
             .map((a) => a.app_name)
             .join(', ');
-          const extra = alerts.length > 3 ? ` +${alerts.length - 3} lainnya` : '';
+          const extra = alerts.length > 3 ? ` +${alerts.length - 3} more` : '';
           await this.sendWindowsToast(
-            `${alerts.length} Update Baru di DailyUploads!`,
+            `${alerts.length} New Updates on DailyUploads!`,
             `${names}${extra}`
           );
         }
@@ -140,7 +140,7 @@ class Notifier {
         },
         (err, _stdout, stderr) => {
           if (err) {
-            reject(new Error((stderr || err.message || 'Windows Toast gagal ditampilkan').trim().slice(0, 200)));
+            reject(new Error((stderr || err.message || 'Failed to display Windows Toast').trim().slice(0, 200)));
             return;
           }
           resolve(true);
@@ -175,7 +175,7 @@ class Notifier {
       .map((s) => s.trim())
       .filter(Boolean);
     if (chatIds.length === 0) {
-      throw new Error('Telegram Chat ID kosong.');
+      throw new Error('Telegram Chat ID is empty.');
     }
 
     const errors = [];
@@ -184,15 +184,15 @@ class Notifier {
         // Batch up to 5 alerts per message to respect Telegram 4096 char limit
         for (let i = 0; i < alerts.length; i += 5) {
           const batch = alerts.slice(i, i + 5);
-          const lines = ['🔔 <b>DailyUploads Radar — Update Terdeteksi!</b>\n'];
+          const lines = ['🔔 <b>DailyUploads Radar — New Update Detected!</b>\n'];
           for (const a of batch) {
             const info = formatAlertSummary(a);
             lines.push(
               `📦 <b>${escapeTelegramHtml(a.app_name)}</b>`,
-              `• Versi: <code>${escapeTelegramHtml(info.versionDiff)}</code>`,
-              `• Platform: ${escapeTelegramHtml(a.platform)} | Ukuran: ${escapeTelegramHtml(a.size_text || '-')}`,
+              `• Version: <code>${escapeTelegramHtml(info.versionDiff)}</code>`,
+              `• Platform: ${escapeTelegramHtml(a.platform)} | Size: ${escapeTelegramHtml(a.size_text || '-')}`,
               `• Watch rule: <i>${escapeTelegramHtml(a.watch_name)}</i>`,
-              `• <a href="${escapeTelegramHtml(a.download_url)}">Buka Link Download</a>\n`
+              `• <a href="${escapeTelegramHtml(a.download_url)}">Open Download Link</a>\n`
             );
           }
           await this.sendTelegramMessage(token, chatId, lines.join('\n'));
@@ -213,7 +213,7 @@ class Notifier {
     if (isDiscord) {
       payload = {
         username: 'DailyUploads Radar',
-        content: `🔔 **${alerts.length} update baru terdeteksi di DailyUploads!**`,
+        content: `🔔 **${alerts.length} new update${alerts.length === 1 ? '' : 's'} detected on DailyUploads!**`,
         embeds: alerts.slice(0, 10).map((a) => {
           const info = formatAlertSummary(a);
           return {
@@ -273,7 +273,7 @@ class Notifier {
 
     if (channel === 'telegram') {
       if (!settings.telegram_bot_token || !settings.telegram_chat_id) {
-        throw new Error('Isi Telegram Bot Token dan Chat ID terlebih dahulu.');
+        throw new Error('Enter both Telegram Bot Token and Chat ID first.');
       }
       await this.sendTelegramAlerts(settings.telegram_bot_token, settings.telegram_chat_id, [sampleAlert]);
       return { ok: true, channel: 'telegram' };
@@ -281,7 +281,7 @@ class Notifier {
 
     if (channel === 'webhook') {
       if (!settings.webhook_url) {
-        throw new Error('Isi Webhook URL terlebih dahulu.');
+        throw new Error('Enter a Webhook URL first.');
       }
       await this.sendWebhookAlerts(settings.webhook_url, [sampleAlert]);
       return { ok: true, channel: 'webhook' };
@@ -289,13 +289,13 @@ class Notifier {
 
     if (channel === 'windows_toast') {
       if (process.platform !== 'win32') {
-        throw new Error('Windows Toast hanya tersedia di Windows.');
+        throw new Error('Windows Toast is only available on Windows.');
       }
-      await this.sendWindowsToast('DailyUploads Radar — Test', 'Notifikasi desktop Windows aktif dan bekerja!');
+      await this.sendWindowsToast('DailyUploads Radar — Test', 'Windows desktop notifications are active and working!');
       return { ok: true, channel: 'windows_toast' };
     }
 
-    throw new Error(`Channel tidak dikenal: ${channel}`);
+    throw new Error(`Unknown notification channel: ${channel}`);
   }
 }
 

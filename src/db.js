@@ -317,7 +317,7 @@ class RadarDB {
   addSource(username, label = '') {
     const clean = String(username || '').trim();
     if (!clean || !/^[a-zA-Z0-9._-]+$/.test(clean)) {
-      throw new Error('Username DailyUploads tidak valid (hanya huruf, angka, titik, strip, underscore).');
+      throw new Error('Invalid DailyUploads username (only letters, numbers, dots, hyphens, and underscores allowed).');
     }
     this.db
       .prepare(
@@ -331,7 +331,7 @@ class RadarDB {
   removeSource(username) {
     const sources = this.listSources();
     if (sources.length <= 1) {
-      throw new Error('Minimal harus ada 1 source aktif.');
+      throw new Error('At least 1 active source must remain.');
     }
     this.db.exec('BEGIN');
     try {
@@ -985,7 +985,7 @@ class RadarDB {
 
     if (type === 'app') {
       if (!slug && name) slug = slugifyAppName(name);
-      if (!slug) throw new Error('target_slug atau display_name wajib diisi.');
+      if (!slug) throw new Error('target_slug or display_name is required.');
 
       // Prevent duplicate app watch
       const existing = this.db
@@ -1026,7 +1026,7 @@ class RadarDB {
     }
 
     // Keyword watch
-    if (!kw) throw new Error('Keyword wajib diisi.');
+    if (!kw) throw new Error('Keyword is required.');
     if (!name) name = kw;
     const existing = this.db
       .prepare("SELECT * FROM watchlist WHERE watch_type = 'keyword' AND LOWER(keyword) = LOWER(?) AND platform_filter = ?")
@@ -1099,7 +1099,7 @@ class RadarDB {
   }
 
   importWatchlist(items = []) {
-    if (!Array.isArray(items)) throw new Error('Format import harus berupa array.');
+    if (!Array.isArray(items)) throw new Error('Import payload must be a JSON array.');
     let added = 0;
     let skipped = 0;
     for (const raw of items) {

@@ -2,8 +2,10 @@ name: DailyUploads Radar Cloud Sync
 
 on:
   schedule:
-    # Runs automatically in GitHub Cloud every 15 minutes without needing a local PC
-    - cron: '*/15 * * * *'
+    # Staggered off-peak minutes every 15m in GitHub Cloud to minimize runner queue contention
+    - cron: '7,22,37,52 * * * *'
+  repository_dispatch:
+    types: [radar-sync]
   workflow_dispatch:
     inputs:
       mode:
@@ -110,7 +112,7 @@ jobs:
       - name: Deploy Cloud Web UI & Catalog to GitHub Pages (gh-pages)
         if: >-
           steps.sync.outcome == 'success' &&
-          (github.event_name != 'schedule' ||
+          ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') ||
            steps.sync.outputs.pages_needs_deploy == 'true' ||
            steps.check_pages.outputs.exists == 'false')
         run: |

@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 where node >nul 2>nul
 if %errorlevel% neq 0 (
-  echo [ERROR] Node.js tidak ditemukan! Silakan install Node.js 22.5+ terlebih dahulu.
+  echo [ERROR] Node.js not found! Please install Node.js 22.5+ first.
   pause
   exit /b 1
 )

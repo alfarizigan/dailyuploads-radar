@@ -1,9 +1,16 @@
 <!DOCTYPE html>
-<html lang="id" data-theme="dark">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DailyUploads Radar — Smart App Searcher &amp; Update Tracker</title>
+  <meta name="theme-color" content="#0b0f19" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Instant App Searcher, Filter, Version Tracker &amp; 24/7 Cloud Update Notifier for DailyUploads." />
+  <title>DailyUploads Radar — Smart App Searcher &amp; 24/7 Update Tracker</title>
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -13,53 +20,52 @@
         <div class="brand-icon" aria-hidden="true">🛰️</div>
         <div class="brand-text">
           <h1>DailyUploads Radar</h1>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <div class="brand-pills">
             <a id="sourceHeaderLink" href="https://dailyuploads.net/users/user_hidden" target="_blank" rel="noopener noreferrer" class="source-pill">
               user_hidden ↗
             </a>
-            <span id="runtimeModeBadge" class="source-pill hidden" style="color:var(--green);border-color:var(--green)">☁️ Cloud 24/7</span>
+            <span id="runtimeModeBadge" class="source-pill badge-cloud hidden" title="Powered by GitHub Actions &amp; GitHub Pages 24/7">☁️ Cloud 24/7</span>
           </div>
         </div>
       </div>
 
-      <nav class="nav-tabs" role="tablist">
+      <nav class="nav-tabs" role="tablist" aria-label="Main navigation">
         <button class="nav-tab active" data-tab="catalog" role="tab">
-          <span>🔍</span> <span data-i18n="tab_catalog">Katalog</span>
+          <span>🔍</span> <span>Catalog</span>
         </button>
         <button class="nav-tab" data-tab="watchlist" role="tab">
-          <span>⭐</span> <span data-i18n="tab_watchlist">Watchlist</span>
+          <span>⭐</span> <span>Watchlist</span>
           <span class="badge-pill" id="navWatchCount">0</span>
         </button>
         <button class="nav-tab" data-tab="alerts" role="tab">
-          <span>🔔</span> <span data-i18n="tab_alerts">Notifikasi</span>
+          <span>🔔</span> <span>Alerts</span>
           <span class="badge-pill badge-danger hidden" id="navUnreadCount">0</span>
         </button>
         <button class="nav-tab" data-tab="insights" role="tab">
-          <span>📊</span> <span data-i18n="tab_insights">Insights</span>
+          <span>📊</span> <span>Insights</span>
         </button>
         <button class="nav-tab" data-tab="settings" role="tab">
-          <span>⚙️</span> <span data-i18n="tab_settings">Pengaturan</span>
+          <span>⚙️</span> <span>Settings</span>
         </button>
       </nav>
 
       <div class="topbar-actions">
         <div class="sync-group">
-          <button id="btnQuickSync" class="btn btn-primary btn-sm" title="Cek upload baru (cepat ~1-2 detik)">
-            <span class="sync-spin">🔄</span> <span data-i18n="btn_quick_sync">Quick Sync</span>
+          <button id="btnQuickSync" class="btn btn-primary btn-sm" title="Check for new uploads (~1–2s)">
+            <span class="sync-spin" id="btnQuickSyncIcon">🔄</span> <span id="btnQuickSyncLabel">Quick Sync</span>
           </button>
-          <button id="btnFullSync" class="btn btn-ghost btn-sm" title="Sinkronisasi ulang seluruh katalog (~7 detik)">
-            <span data-i18n="btn_full_sync">Full</span>
+          <button id="btnFullSync" class="btn btn-ghost btn-sm" title="Full catalog resync">
+            <span id="btnFullSyncLabel">Full</span>
           </button>
         </div>
-        <button id="btnLang" class="btn btn-icon" title="Switch ID / EN">ID</button>
-        <button id="btnTheme" class="btn btn-icon" title="Dark / Light Theme">☀️</button>
+        <button id="btnTheme" class="btn btn-icon" title="Switch Dark / Light Theme" aria-label="Toggle theme">☀️</button>
       </div>
     </div>
 
     <div id="syncBanner" class="sync-banner hidden">
       <div class="sync-banner-inner">
         <span class="pulse-dot"></span>
-        <span id="syncBannerText">Menyinkronkan katalog dari DailyUploads...</span>
+        <span id="syncBannerText">Syncing catalog from DailyUploads...</span>
         <div class="progress-track">
           <div id="syncProgressBar" class="progress-fill" style="width: 10%"></div>
         </div>
@@ -72,24 +78,25 @@
     <section id="tab-catalog" class="tab-panel active">
       <div class="kpi-strip">
         <div class="kpi-card">
-          <div class="kpi-label" data-i18n="kpi_files">Total File</div>
+          <div class="kpi-label">Total Files</div>
           <div class="kpi-val" id="kpiTotalFiles">—</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label" data-i18n="kpi_apps">Aplikasi Unik</div>
+          <div class="kpi-label">Unique Apps</div>
           <div class="kpi-val" id="kpiTotalApps">—</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label" data-i18n="kpi_today">Upload Hari Ini</div>
+          <div class="kpi-label">Uploaded Today</div>
           <div class="kpi-val accent-green" id="kpiToday">—</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-label" data-i18n="kpi_watched">Dipantau</div>
+        <div class="kpi-card kpi-card-wide-mobile">
+          <div class="kpi-label">Watched</div>
           <div class="kpi-val accent-amber" id="kpiWatched">—</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-label" data-i18n="kpi_last_sync">Sync Terakhir</div>
+        <div class="kpi-card kpi-card-wide-mobile">
+          <div class="kpi-label">Last Sync</div>
           <div class="kpi-val kpi-val-sm" id="kpiLastSync">—</div>
+          <div class="kpi-sub" id="kpiLastSyncSub"></div>
         </div>
       </div>
 
@@ -100,17 +107,18 @@
             type="text"
             id="searchInput"
             class="search-input"
-            placeholder="Cari aplikasi, versi, tag, filename... (tekan / untuk fokus)"
+            placeholder="Search apps, versions, tags, filenames..."
             autocomplete="off"
           />
-          <button id="btnClearSearch" class="clear-btn hidden" title="Clear">✕</button>
-          <button id="btnWatchQuery" class="btn btn-amber btn-sm hidden" title="Pantau keyword ini untuk notifikasi update">
-            🔔 <span data-i18n="btn_watch_keyword">Pantau Keyword</span>
+          <kbd id="searchKbdHint" class="search-kbd-hint" title="Press / to focus search">/</kbd>
+          <button id="btnClearSearch" class="clear-btn hidden" title="Clear search" aria-label="Clear search">✕</button>
+          <button id="btnWatchQuery" class="btn btn-amber btn-sm hidden" title="Watch this keyword for automatic update alerts">
+            🔔 <span>Watch Keyword</span>
           </button>
         </div>
 
         <div class="quick-chips">
-          <span class="chip-label" data-i18n="quick_tags">Cepat:</span>
+          <span class="chip-label">Quick:</span>
           <button class="chip" data-tag="VIP">VIP</button>
           <button class="chip" data-tag="Pro">Pro</button>
           <button class="chip" data-tag="Subscribed">Subscribed</button>
@@ -130,53 +138,55 @@
 
         <div class="filters-row">
           <label class="filter-field">
-            <span data-i18n="f_sort">Urutkan</span>
+            <span>Sort By</span>
             <select id="filterSort">
-              <option value="newest">Terbaru</option>
-              <option value="oldest">Terlama</option>
-              <option value="downloads">Download Terbanyak</option>
-              <option value="name_asc">Nama A → Z</option>
-              <option value="name_desc">Nama Z → A</option>
-              <option value="size_desc">Ukuran Terbesar</option>
-              <option value="size_asc">Ukuran Terkecil</option>
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="downloads">Most Downloaded</option>
+              <option value="name_asc">Name A → Z</option>
+              <option value="name_desc">Name Z → A</option>
+              <option value="size_desc">Largest Size</option>
+              <option value="size_asc">Smallest Size</option>
             </select>
           </label>
 
           <label class="filter-field">
-            <span data-i18n="f_ext">Format</span>
+            <span>Format</span>
             <select id="filterExt">
-              <option value="all">Semua</option>
+              <option value="all">All Formats</option>
             </select>
           </label>
 
           <label class="filter-field">
-            <span data-i18n="f_ios">Min iOS</span>
+            <span>Min iOS</span>
             <select id="filterMaxIos">
-              <option value="all">Semua iOS</option>
+              <option value="all">Any iOS</option>
               <option value="13">≤ iOS 13</option>
               <option value="14">≤ iOS 14</option>
               <option value="15">≤ iOS 15</option>
               <option value="16">≤ iOS 16</option>
               <option value="17">≤ iOS 17</option>
               <option value="18">≤ iOS 18</option>
+              <option value="26">≤ iOS 26</option>
+              <option value="27">≤ iOS 27</option>
             </select>
           </label>
 
           <label class="filter-field">
-            <span data-i18n="f_age">Waktu Upload</span>
+            <span>Upload Age</span>
             <select id="filterMaxDays">
-              <option value="all">Semua waktu</option>
-              <option value="0">Hari ini (0d)</option>
-              <option value="3">≤ 3 hari</option>
-              <option value="7">≤ 7 hari</option>
-              <option value="30">≤ 30 hari</option>
+              <option value="all">Any time</option>
+              <option value="0">Today (0d)</option>
+              <option value="3">≤ 3 days</option>
+              <option value="7">≤ 7 days</option>
+              <option value="30">≤ 30 days</option>
             </select>
           </label>
 
           <label class="filter-field">
-            <span data-i18n="f_size">Ukuran</span>
+            <span>File Size</span>
             <select id="filterSize">
-              <option value="all">Semua ukuran</option>
+              <option value="all">Any size</option>
               <option value="0-50">&lt; 50 MB</option>
               <option value="50-200">50 – 200 MB</option>
               <option value="200-1024">200 MB – 1 GB</option>
@@ -185,16 +195,16 @@
           </label>
 
           <label class="filter-field">
-            <span data-i18n="f_tag">Tag</span>
+            <span>Tag</span>
             <select id="filterTag">
-              <option value="all">Semua Tag</option>
+              <option value="all">All Tags</option>
             </select>
           </label>
 
           <label class="filter-field hidden" id="sourceFilterWrap">
             <span>Source</span>
             <select id="filterSource">
-              <option value="all">Semua Source</option>
+              <option value="all">All Sources</option>
             </select>
           </label>
         </div>
@@ -203,23 +213,24 @@
           <div class="toolbar-left">
             <label class="toggle-chip">
               <input type="checkbox" id="toggleGrouped" checked />
-              <span data-i18n="opt_group">Gabung per Aplikasi</span>
+              <span>Group by App</span>
             </label>
             <label class="toggle-chip">
               <input type="checkbox" id="toggleWatchedOnly" />
-              <span data-i18n="opt_watched">Hanya Watchlist ⭐</span>
+              <span>Watched Only ⭐</span>
             </label>
-            <button id="btnResetFilters" class="btn btn-ghost btn-xs">↺ <span data-i18n="btn_reset">Reset</span></button>
+            <button id="btnResetFilters" class="btn btn-ghost btn-xs">↺ <span>Reset</span></button>
           </div>
 
           <div class="toolbar-right">
-            <span id="resultsSummary" class="muted-text">Memuat...</span>
+            <span id="resultsSummary" class="muted-text">Loading...</span>
             <div class="segmented">
               <button id="viewGrid" class="seg-btn active" title="Grid View">⊞</button>
               <button id="viewTable" class="seg-btn" title="Table View">☰</button>
             </div>
-            <button id="btnExportCsv" class="btn btn-ghost btn-xs" title="Export hasil filter ke CSV">CSV ↓</button>
-            <button id="btnExportJson" class="btn btn-ghost btn-xs" title="Export hasil filter ke JSON">JSON ↓</button>
+            <button id="btnShareSearch" class="btn btn-ghost btn-xs" title="Copy shareable link for current search &amp; filters">🔗 Link</button>
+            <button id="btnExportCsv" class="btn btn-ghost btn-xs" title="Export filtered results to CSV">CSV ↓</button>
+            <button id="btnExportJson" class="btn btn-ghost btn-xs" title="Export filtered results to JSON">JSON ↓</button>
           </div>
         </div>
       </div>
@@ -232,9 +243,9 @@
     <section id="tab-watchlist" class="tab-panel">
       <div class="panel-header">
         <div>
-          <h2 data-i18n="wl_title">⭐ Watchlist &amp; Pantauan Update</h2>
-          <p class="muted-text" data-i18n="wl_desc">
-            Tandai aplikasi atau buat aturan keyword. Setiap ada upload baru yang cocok, Radar akan memberi notifikasi otomatis!
+          <h2>⭐ Watchlist &amp; Update Rules</h2>
+          <p class="muted-text">
+            Bookmark specific apps or add keyword rules. Whenever a matching new upload arrives, Radar alerts you automatically!
           </p>
         </div>
         <div class="header-actions">
@@ -248,16 +259,16 @@
 
       <form id="addKeywordForm" class="card form-inline">
         <div class="form-row">
-          <input type="text" id="kwInput" class="input" placeholder="Tambah keyword pantauan (mis. Spotify, YouTube, Procreate, Minecraft)..." required />
+          <input type="text" id="kwInput" class="input" placeholder="Add watch keyword (e.g. Spotify, YouTube, Procreate, Minecraft)..." required />
           <select id="kwPlatform" class="select">
-            <option value="">Semua Platform</option>
+            <option value="">All Platforms</option>
             <option value="iOS">iOS</option>
             <option value="macOS">macOS</option>
             <option value="Windows">Windows</option>
             <option value="Archive">Archive</option>
           </select>
-          <input type="text" id="kwNotes" class="input" placeholder="Catatan opsional (mis. tunggu v10)" />
-          <button type="submit" class="btn btn-primary">+ <span data-i18n="btn_add_rule">Tambah Pantauan</span></button>
+          <input type="text" id="kwNotes" class="input" placeholder="Optional note (e.g. wait for v10)" />
+          <button type="submit" class="btn btn-primary">+ <span>Add Watch Rule</span></button>
         </div>
       </form>
 
@@ -268,15 +279,15 @@
     <section id="tab-alerts" class="tab-panel">
       <div class="panel-header">
         <div>
-          <h2 data-i18n="al_title">🔔 Pusat Notifikasi Update</h2>
-          <p class="muted-text" data-i18n="al_desc">
-            Daftar aplikasi yang terdeteksi mendapat versi/upload terbaru sejak kamu memantaunya.
+          <h2>🔔 Update Notification Center</h2>
+          <p class="muted-text">
+            Detected version upgrades and fresh uploads matching your watched apps and keyword rules.
           </p>
         </div>
         <div class="header-actions">
-          <button id="btnEnableBrowserNotif" class="btn btn-ghost btn-sm">🔔 Aktifkan Notifikasi Browser</button>
-          <button id="btnMarkAllRead" class="btn btn-primary btn-sm">✓ Tandai Semua Dibaca</button>
-          <button id="btnClearAlerts" class="btn btn-danger-ghost btn-sm">🗑 Bersihkan</button>
+          <button id="btnEnableBrowserNotif" class="btn btn-ghost btn-sm">🔔 Enable Browser Notifications</button>
+          <button id="btnMarkAllRead" class="btn btn-primary btn-sm">✓ Mark All Read</button>
+          <button id="btnClearAlerts" class="btn btn-danger-ghost btn-sm">🗑 Clear History</button>
         </div>
       </div>
 
@@ -285,13 +296,32 @@
 
     <!-- ═══════════════ TAB: INSIGHTS & SOURCES ═══════════════ -->
     <section id="tab-insights" class="tab-panel">
+      <div class="kpi-strip insights-kpi-strip" id="insightsSummaryStrip">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Catalog Size</div>
+          <div class="kpi-val kpi-val-md" id="insCatalogSize">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Total Downloads</div>
+          <div class="kpi-val kpi-val-md" id="insTotalDownloads">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Last 7 Days</div>
+          <div class="kpi-val kpi-val-md accent-green" id="insUploadedWeek">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Active Sources</div>
+          <div class="kpi-val kpi-val-md" id="insSourcesCount">—</div>
+        </div>
+      </div>
+
       <div class="insights-grid">
         <div class="card">
           <h3>🔥 Top Downloaded</h3>
           <div id="topDownloadedList" class="mini-list"></div>
         </div>
         <div class="card">
-          <h3>🔄 Aplikasi Paling Sering Update</h3>
+          <h3>🔄 Most Frequently Updated Apps</h3>
           <div id="multiVersionList" class="mini-list"></div>
         </div>
       </div>
@@ -299,22 +329,22 @@
       <div class="card mt-16">
         <div class="panel-header compact">
           <div>
-            <h3>🌐 Sumber DailyUploads (Sources)</h3>
-            <p class="muted-text">Default: <code>user_hidden</code>. Kamu juga bisa menambahkan user DailyUploads lain.</p>
+            <h3>🌐 DailyUploads Sources</h3>
+            <p class="muted-text">Default: <code>user_hidden</code>. You can track additional public DailyUploads users as well.</p>
           </div>
         </div>
         <form id="addSourceForm" class="form-row mt-12">
-          <input type="text" id="newSourceInput" class="input" placeholder="Username atau URL (mis. https://dailyuploads.net/users/nama_user)" required />
-          <button type="submit" class="btn btn-primary">+ Tambah Source</button>
+          <input type="text" id="newSourceInput" class="input" placeholder="Username or URL (e.g. https://dailyuploads.net/users/username)" required />
+          <button type="submit" class="btn btn-primary">+ Add Source</button>
         </form>
         <div id="cloudSourcesHint" class="status-box mt-12 hidden">
-          ☁️ Di Mode Cloud, source tambahan dapat diatur lewat GitHub Repository Variables → <code>EXTRA_SOURCES</code> (pisahkan dengan koma).
+          ☁️ In Cloud Mode, extra sources can be configured via GitHub Repository Variables → <code>EXTRA_SOURCES</code> (comma-separated).
         </div>
         <div id="sourcesList" class="stack-list mt-12"></div>
       </div>
 
       <div class="card mt-16">
-        <h3>📜 Riwayat Sinkronisasi</h3>
+        <h3>📜 Sync History</h3>
         <div id="syncLogsContainer" class="table-wrap mt-12"></div>
       </div>
     </section>
@@ -322,21 +352,21 @@
     <!-- ═══════════════ TAB: SETTINGS ═══════════════ -->
     <section id="tab-settings" class="tab-panel">
       <div id="cloudSettingsCard" class="card hidden" style="margin-bottom:16px;border-color:var(--primary)">
-        <h3>☁️ Mode Cloud Aktif (GitHub Actions + GitHub Pages 24/7)</h3>
+        <h3>☁️ Cloud Mode Active (GitHub Actions + GitHub Pages 24/7)</h3>
         <p class="muted-text small-p">
-          Aplikasi ini berjalan <b>100% di Cloud GitHub</b> tanpa perlu menyalakan PC server! Katalog di-update otomatis di background setiap ~15 menit oleh <b>GitHub Actions</b>, sedangkan pencarian/filter/sort di halaman web ini berjalan <b>instan (0 detik)</b>.
+          This app runs <b>100% serverless on GitHub Cloud</b> without keeping a local PC on! Background scraping runs automatically on a ~15-minute schedule in <b>GitHub Actions</b> (pushed to the zero-bloat <code>radar-state</code> branch), while search, filtering, and sorting run <b>instantly in your browser</b>.
         </p>
         <div id="cloudRepoLinks" class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
-          <a id="linkGhActions" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">⚡ Buka GitHub Actions (Sync Manual / Log) ↗</a>
-          <a id="linkGhSecrets" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">🔐 Atur Secrets Telegram / Webhook ↗</a>
-          <a id="linkGhWatchlist" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">📝 Edit watchlist.json di GitHub ↗</a>
+          <a id="linkGhActions" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">⚡ Open GitHub Actions (Manual Run / Logs) ↗</a>
+          <a id="linkGhSecrets" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">🔐 Configure Telegram / Webhook Secrets ↗</a>
+          <a id="linkGhWatchlist" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">📝 Edit watchlist.json on GitHub ↗</a>
         </div>
 
         <div class="status-box ok mt-12">
-          <b>Cara Pasang Notifikasi Push Telegram 24/7 di Cloud:</b><br />
-          1. Buat bot di <b>@BotFather</b> (salin Token), kirim pesan <code>/start</code> ke bot kamu, lalu gunakan tombol <b>🔍 Deteksi Chat ID Otomatis</b> &amp; <b>🧪 Test Kirim Telegram</b> di bawah untuk verifikasi!<br />
-          2. Klik <b>🔐 Atur Secrets Telegram / Webhook</b> di atas → tambahkan Repository Secret <code>TELEGRAM_BOT_TOKEN</code> dan <code>TELEGRAM_CHAT_ID</code> (opsional: <code>WEBHOOK_URL</code> untuk Discord).<br />
-          3. Untuk menandai aplikasi agar dipantau 24/7 di Cloud: chat <code>/watch NamaAplikasi</code> ke Bot Telegram kamu, <b>atau</b> isi GitHub Token opsional di bawah agar tombol <b>🔔 Watch</b> di Web ini langsung tersinkron ke Cloud!
+          <b>How to Enable 24/7 Mobile Push Alerts (Telegram / Discord):</b><br />
+          1. Create a bot via <b>@BotFather</b> (copy the Token), send <code>/start</code> to your bot in Telegram, then use <b>🔍 Auto-Detect Chat ID</b> &amp; <b>🧪 Test Telegram</b> below to verify!<br />
+          2. Click <b>🔐 Configure Telegram / Webhook Secrets</b> above → add Repository Secrets <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> (optional: <code>WEBHOOK_URL</code> for Discord).<br />
+          3. To watch apps 24/7 in the cloud: send <code>/watch AppName</code> to your Telegram Bot, <b>or</b> paste an optional GitHub Personal Access Token below so clicking <b>🔔 Watch</b> or <b>🔄 Cloud Sync</b> in this Web UI updates GitHub directly!
         </div>
 
         <div class="form-group mt-12">
@@ -344,28 +374,28 @@
           <input type="text" id="setCloudGhRepo" class="input" placeholder="alfarizigan/dailyuploads-radar" autocomplete="off" />
         </div>
         <div class="form-group">
-          <label for="setCloudGhPat">GitHub Personal Access Token (Opsional — disimpan lokal di browser ini saja)</label>
-          <input type="password" id="setCloudGhPat" class="input" placeholder="ghp_... (agar klik Watch &amp; Sync di Web langsung update repo GitHub)" autocomplete="off" />
-          <small class="muted-text">Jika dikosongkan, tombol 🔔 Watch tetap berfungsi menyimpan di browser ini, dan kamu tetap bisa memakai <code>/watch</code> via Bot Telegram.</small>
+          <label for="setCloudGhPat">GitHub Personal Access Token (Optional — stored locally in this browser only)</label>
+          <input type="password" id="setCloudGhPat" class="input" placeholder="ghp_... (enables 1-click Web Watchlist sync &amp; live GitHub Actions dispatch)" autocomplete="off" />
+          <small class="muted-text">Requires <code>repo</code> / <code>contents:write</code> &amp; <code>actions:write</code> scope. Leave blank to keep watchlist rules in this browser or manage cloud rules via Telegram <code>/watch</code>.</small>
         </div>
         <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
-          <button type="button" id="btnSaveCloudBridge" class="btn btn-primary btn-sm">💾 Simpan Koneksi Cloud</button>
-          <button type="button" id="btnPushWatchlistCloud" class="btn btn-amber btn-sm">☁️ Push Watchlist Browser ke GitHub Cloud</button>
+          <button type="button" id="btnSaveCloudBridge" class="btn btn-primary btn-sm">💾 Save Cloud Connection</button>
+          <button type="button" id="btnPushWatchlistCloud" class="btn btn-amber btn-sm">☁️ Push Browser Watchlist to GitHub Cloud</button>
         </div>
       </div>
 
       <form id="settingsForm" class="settings-grid">
         <div class="card" id="localAutoSyncCard">
-          <h3>⏱️ Auto-Sync &amp; Desktop Notification</h3>
+          <h3>⏱️ Auto-Sync &amp; Desktop Notifications</h3>
           <div class="form-group">
-            <label for="setSyncInterval">Interval Auto-Sync (menit, 0 = matikan)</label>
+            <label for="setSyncInterval">Auto-Sync Interval (minutes, 0 = disabled)</label>
             <input type="number" id="setSyncInterval" class="input" min="0" max="1440" value="20" />
-            <small class="muted-text">Quick sync sangat ringan (~1-2 detik, hanya cek upload terbaru di halaman 1).</small>
+            <small class="muted-text">Quick sync is lightweight (~1–2s, checks page 1 for new uploads).</small>
           </div>
 
           <label class="switch-row">
             <input type="checkbox" id="setWindowsToast" />
-            <span>Aktifkan Windows Desktop Toast Notification</span>
+            <span>Enable Windows Desktop Toast Notifications</span>
           </label>
           <div class="mt-12">
             <button type="button" class="btn btn-ghost btn-sm" data-test-channel="windows_toast">🧪 Test Windows Toast</button>
@@ -373,14 +403,14 @@
         </div>
 
         <div class="card">
-          <h3 id="tgSettingsTitle">✈️ Telegram Bot (Notifikasi + Search Interaktif!)</h3>
+          <h3 id="tgSettingsTitle">✈️ Telegram Bot (Push Alerts + Interactive Search!)</h3>
           <p class="muted-text small-p" id="tgSettingsDesc">
-            1. Buat bot di <b>@BotFather</b> lalu salin Token.<br />
-            2. Aktifkan Interactive Bot di bawah, simpan, lalu kirim <code>/start</code> ke bot kamu untuk mendapatkan <b>Chat ID</b>.<br />
-            3. Bot bisa dipakai langsung untuk <code>/search</code>, <code>/latest</code>, <code>/watch</code>, <code>/watchlist</code>, <code>/sync</code>!
+            1. Create a bot via <b>@BotFather</b> and copy its Token.<br />
+            2. Enable Interactive Bot below, save, then send <code>/start</code> to your bot to get your <b>Chat ID</b>.<br />
+            3. Use your bot anytime for <code>/search</code>, <code>/latest</code>, <code>/watch</code>, <code>/unwatch</code>, <code>/watchlist</code>, <code>/sync</code>!
           </p>
 
-          <div id="telegramStatusBox" class="status-box mt-12">Status Bot: —</div>
+          <div id="telegramStatusBox" class="status-box mt-12">Bot Status: —</div>
 
           <div class="form-group mt-12">
             <label for="setTgToken">Telegram Bot Token</label>
@@ -388,22 +418,22 @@
           </div>
           <div class="form-group">
             <label for="setTgChatId">Telegram Chat ID</label>
-            <input type="text" id="setTgChatId" class="input" placeholder="Contoh: 123456789 (pisahkan koma jika lebih dari 1)" />
+            <input type="text" id="setTgChatId" class="input" placeholder="e.g. 123456789 (comma-separated for multiple chats)" />
           </div>
           <label class="switch-row" id="tgLongPollingRow">
             <input type="checkbox" id="setTgEnabled" />
-            <span>Aktifkan Interactive Telegram Bot (Long Polling)</span>
+            <span>Enable Interactive Telegram Bot (Long Polling)</span>
           </label>
           <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
-            <button type="button" id="btnDetectTgChatId" class="btn btn-ghost btn-sm hidden">🔍 Deteksi Chat ID Otomatis</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-test-channel="telegram">🧪 Test Kirim Telegram</button>
+            <button type="button" id="btnDetectTgChatId" class="btn btn-ghost btn-sm hidden">🔍 Auto-Detect Chat ID</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-test-channel="telegram">🧪 Test Telegram</button>
           </div>
         </div>
 
         <div class="card">
           <h3>🔗 Discord / Generic Webhook</h3>
           <p class="muted-text small-p" id="webhookSettingsDesc">
-            Tempelkan Discord Webhook URL (otomatis format Embed keren) atau URL webhook lain (JSON POST).
+            Paste a Discord Webhook URL (automatically formatted as rich Embeds) or any custom JSON POST webhook URL.
           </p>
           <div class="form-group mt-12">
             <label for="setWebhookUrl">Webhook URL</label>
@@ -415,7 +445,7 @@
         </div>
 
         <div class="settings-footer" id="localSettingsFooter">
-          <button type="submit" class="btn btn-primary">💾 Simpan Pengaturan</button>
+          <button type="submit" class="btn btn-primary">💾 Save Settings</button>
         </div>
       </form>
     </section>
