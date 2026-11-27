@@ -167,6 +167,7 @@
       this._ghSyncDirty = false;
       this.lastFetchedAt = 0;
       this.lastSourceUrl = '';
+      this.lastCommitSha = '';
     }
 
     /* ── Storage Helpers ──────────────────────────────────── */
@@ -391,6 +392,7 @@
 
       const incomingCloudWl = Array.isArray(stateObj.watchlist) ? stateObj.watchlist : [];
       this.versionCountBySourceSlug = vCounts;
+      this.lastCommitSha = '';
       this.state = {
         exported_at: stateObj.exported_at || null,
         sources,
@@ -504,7 +506,7 @@
       }
     }
 
-    async _tryFetchStateFromUrl(url, timeoutMs) {
+    async _tryFetchStateFromUrl(url, timeoutMs, commitSha = '') {
       // Intentionally send a simple CORS GET with no custom headers to avoid OPTIONS preflight on raw.githubusercontent.com / jsDelivr
       const res = await this._fetchWithTimeout(url, undefined, timeoutMs);
       if (!res.ok) {
@@ -514,8 +516,11 @@
       this.loadStateObject(json);
       this.lastFetchedAt = Date.now();
       this.lastSourceUrl = url;
+      this.lastCommitSha = commitSha || '';
       return {
         ok: true,
+        unchanged: false,
+        commitSha: this.lastCommitSha,
         sourceUrl: url,
         totalFiles: this.state.files.length,
         exportedAt: this.state.exported_at,
@@ -537,12 +542,23 @@
           attemptedSha = true;
           const sha = await this._resolveRadarStateCommitSha(repo, cfg.github_pat, Math.min(5000, timeoutMs));
           if (sha) {
+            if (sha === this.lastCommitSha && this.state.files.length > 0) {
+              this.lastFetchedAt = Date.now();
+              return {
+                ok: true,
+                unchanged: true,
+                commitSha: sha,
+                sourceUrl: this.lastSourceUrl,
+                totalFiles: this.state.files.length,
+                exportedAt: this.state.exported_at,
+              };
+            }
             for (const shaUrl of [
               `https://raw.githubusercontent.com/${repo}/${sha}/cloud-state.json`,
               `https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`,
             ]) {
               try {
-                return await this._tryFetchStateFromUrl(shaUrl, timeoutMs);
+                return await this._tryFetchStateFromUrl(shaUrl, timeoutMs, sha);
               } catch (err) {
                 lastErr = err;
               }
@@ -568,7 +584,8 @@
             try {
               return await this._tryFetchStateFromUrl(
                 `https://cdn.jsdelivr.net/gh/${repo}@${sha}/cloud-state.json`,
-                timeoutMs
+                timeoutMs,
+                sha
               );
             } catch (err) {
               lastErr = err;

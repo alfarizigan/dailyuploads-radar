@@ -732,8 +732,21 @@ test('CloudRadarEngine.fetchRemoteState bypasses CDN cache via commit SHA on for
   assert.ok(!requestedUrls.some((u) => u.includes('@radar-state/')));
   assert.ok(requestedUrls.some((u) => u.includes('api.github.com') && u.includes('_=')));
 
-  // forceFresh=true resolves exact commit SHA URL, and falls back to jsDelivr if raw.githubusercontent.com fails
+  // forceFresh=true short-circuits (unchanged=true) without re-downloading payload when SHA matches lastCommitSha
+  requestedUrls.length = 0;
+  const r2CachedSha = await engine.fetchRemoteState({ forceFresh: true });
+  assert.equal(r2CachedSha.unchanged, true);
+  assert.ok(r2CachedSha.sourceUrl.includes(`cdn.jsdelivr.net/gh/alfarizigan/dailyuploads-radar@${sha1}`));
+  assert.equal(
+    requestedUrls.filter((u) => u.includes('cloud-state.json')).length,
+    0,
+    'Must not re-download cloud-state.json when head commit SHA has not changed'
+  );
+
+  // When state was loaded without a commit SHA (e.g. loadStateObject), forceFresh=true fetches via SHA and falls back to jsDelivr
+  engine.loadStateObject(stateV1);
   const r2 = await engine.fetchRemoteState({ forceFresh: true });
+  assert.equal(r2.unchanged, false);
   assert.ok(r2.sourceUrl.includes(`cdn.jsdelivr.net/gh/alfarizigan/dailyuploads-radar@${sha1}`));
 
   // Cloud watchlist item notify_enabled update & lossless export
@@ -888,6 +901,30 @@ test('pingCloudSync deduplicates active/recent runs, backs off on failures, fall
     assert.equal(rBackoff.dispatched, false);
     assert.equal(rBackoff.reason, 'recent_failure_backoff');
 
+    // 5b. Does NOT back off when latest run was 'skipped' or 'neutral' (not an actual failure)
+    runsPayload = [
+      {
+        id: 13,
+        status: 'completed',
+        conclusion: 'skipped',
+        updated_at: '2026-11-26T23:28:00.000Z',
+      },
+      {
+        id: 11,
+        status: 'completed',
+        conclusion: 'success',
+        updated_at: '2026-11-26T23:10:00.000Z',
+      },
+    ];
+    const rSkipped = await pingCloudSync({
+      repo: 'alfarizigan/dailyuploads-radar',
+      token: 'ghp_secret_never_logged',
+      nowMs,
+      fetchFn: mockFetch,
+      logPath,
+    });
+    assert.equal(rSkipped.dispatched, true);
+
     // 6. Dispatches repository_dispatch when last success was 16m ago (>= 13.5m)
     runsPayload = [
       {
@@ -937,6 +974,43 @@ test('pingCloudSync deduplicates active/recent runs, backs off on failures, fall
         }),
       /GitHub repository_dispatch failed/
     );
+
+    // 8b. Fails fast on 401 during preflight workflow runs check and logs network errors with token redaction
+    let preflightCalls = 0;
+    await assert.rejects(
+      () =>
+        pingCloudSync({
+          repo: 'alfarizigan/dailyuploads-radar',
+          token: 'ghp_secret_never_logged',
+          force: false,
+          nowMs,
+          fetchFn: async () => {
+            preflightCalls += 1;
+            return { ok: false, status: 401, json: async () => ({ message: 'Bad credentials' }) };
+          },
+          logPath,
+        }),
+      /GitHub authentication failed: Bad credentials/
+    );
+    assert.equal(preflightCalls, 1, 'Should fail fast on 401 without attempting POST /dispatches');
+
+    await assert.rejects(
+      () =>
+        pingCloudSync({
+          repo: 'alfarizigan/dailyuploads-radar',
+          token: 'ghp_secret_never_logged',
+          force: true,
+          nowMs,
+          fetchFn: async () => {
+            throw new Error('DNS timeout with header ghp_secret_never_logged');
+          },
+          logPath,
+        }),
+      /DNS timeout/
+    );
+    const netErrLog = fs.readFileSync(logPath, 'utf8');
+    assert.ok(netErrLog.includes('ERROR network: DNS timeout with header [REDACTED]'));
+    assert.ok(!netErrLog.includes('ghp_secret_never_logged'));
 
     // 9. Bounded log rotation <= 200 lines & zero token leakage
     for (let i = 0; i < 250; i += 1) {

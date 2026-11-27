@@ -370,7 +370,7 @@
         </div>
 
         <div class="status-box mt-12">
-          <b>⏱️ About Cloud Auto-Sync Timing:</b> GitHub Actions runs scheduled workflows on shared best-effort runners (~15–30m intervals depending on GitHub queue load). For strict exact-minute 15m execution without runner queue jitter, you can optionally point a free scheduler like <b>cron-job.org</b> at <code>POST https://api.github.com/repos/alfarizigan/dailyuploads-radar/dispatches</code> with body <code>{"event_type":"radar-sync"}</code> and <code>Authorization: Bearer &lt;PAT&gt;</code>.
+          <b>⏱️ About Cloud Auto-Sync Timing &amp; Free Quotas:</b> Public GitHub repositories get <b>unlimited free Actions minutes</b>, and each 15-minute Quick Sync overwrites a single zero-bloat commit on <code>radar-state</code> (skipping GitHub Pages rebuilds when unchanged). For strict exact-minute 15m execution without shared cron queue jitter, run <code>npm run scheduler:install</code> on Windows PC or point a free 24/7 scheduler like <b>cron-job.org</b> at <code id="cloudDispatchEndpointCode">POST https://api.github.com/repos/alfarizigan/dailyuploads-radar/dispatches</code> with body <code>{"event_type":"radar-sync"}</code> and <code>Authorization: Bearer &lt;PAT&gt;</code>.
         </div>
 
         <div class="form-group mt-12">
@@ -430,6 +430,7 @@
           </label>
           <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" id="btnDetectTgChatId" class="btn btn-ghost btn-sm hidden">🔍 Auto-Detect Chat ID</button>
+            <button type="button" id="btnCopyTgChatId" class="btn btn-ghost btn-sm hidden">📋 Copy Chat ID</button>
             <button type="button" class="btn btn-ghost btn-sm" data-test-channel="telegram">🧪 Test Telegram</button>
           </div>
         </div>

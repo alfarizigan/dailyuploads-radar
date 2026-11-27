@@ -1057,22 +1057,31 @@
     if ($('linkGhActions')) $('linkGhActions').href = `${base}/actions/workflows/radar-sync.yml`;
     if ($('linkGhSecrets')) $('linkGhSecrets').href = `${base}/settings/secrets/actions`;
     if ($('linkGhWatchlist')) $('linkGhWatchlist').href = `${base}/edit/main/watchlist.json`;
+    if ($('cloudDispatchEndpointCode')) {
+      $('cloudDispatchEndpointCode').textContent = `POST https://api.github.com/repos/${clean}/dispatches`;
+    }
   }
 
   async function loadSettings() {
     const { settings, telegram, cloud } = await api('/api/settings');
     $('setSyncInterval').value = settings.sync_interval_minutes ?? 20;
     $('setWindowsToast').checked = Boolean(settings.windows_toast_enabled);
-    $('setTgToken').value = settings.telegram_bot_token || '';
-    $('setTgChatId').value = settings.telegram_chat_id || '';
+    if (state.isCloudMode) {
+      $('setTgToken').value = settings.telegram_bot_token || $('setTgToken').value || '';
+      $('setTgChatId').value = settings.telegram_chat_id || $('setTgChatId').value || '';
+      $('setWebhookUrl').value = settings.webhook_url || $('setWebhookUrl').value || '';
+    } else {
+      $('setTgToken').value = settings.telegram_bot_token || '';
+      $('setTgChatId').value = settings.telegram_chat_id || '';
+      $('setWebhookUrl').value = settings.webhook_url || '';
+    }
     $('setTgEnabled').checked = Boolean(settings.telegram_bot_enabled);
-    $('setWebhookUrl').value = settings.webhook_url || '';
 
     const box = $('telegramStatusBox');
     if (state.isCloudMode) {
-      const repoVal = cloud?.github_repo || 'alfarizigan/dailyuploads-radar';
+      const repoVal = cloud?.github_repo || $('setCloudGhRepo')?.value?.trim() || 'alfarizigan/dailyuploads-radar';
       if ($('setCloudGhRepo')) $('setCloudGhRepo').value = repoVal;
-      if ($('setCloudGhPat')) $('setCloudGhPat').value = cloud?.github_pat || '';
+      if ($('setCloudGhPat')) $('setCloudGhPat').value = cloud?.github_pat || $('setCloudGhPat').value || '';
       if ($('tgSettingsTitle')) {
         $('tgSettingsTitle').textContent = '✈️ Telegram Bot Quick Test & Chat ID Detector';
       }
@@ -1885,6 +1894,9 @@
         const token = $('setTgToken').value.trim();
         try {
           $('btnDetectTgChatId').disabled = true;
+          if (token) {
+            cloudEngine.updateCloudSettings({ telegram_bot_token: token });
+          }
           const info = await cloudEngine.detectTelegramChatId(token);
           if (info.chatIds.length > 0) {
             $('setTgChatId').value = info.chatIds.join(', ');
@@ -1902,6 +1914,22 @@
           toast(`Chat ID detection failed: ${err.message}`, 'error');
         } finally {
           $('btnDetectTgChatId').disabled = false;
+        }
+      });
+    }
+
+    if ($('btnCopyTgChatId')) {
+      $('btnCopyTgChatId').addEventListener('click', async () => {
+        const chatId = $('setTgChatId').value.trim();
+        if (!chatId) {
+          toast('Detect or enter a Telegram Chat ID first.', 'warn');
+          return;
+        }
+        try {
+          await copyTextToClipboard(chatId);
+          toast(`📋 Copied Chat ID (${chatId}) to clipboard!`, 'success');
+        } catch (err) {
+          toast(`Copy failed: ${err.message}`, 'error');
         }
       });
     }
@@ -1970,6 +1998,19 @@
     });
   }
 
+  async function refreshAfterBackgroundSync(prevExported, res) {
+    if (!cloudEngine) return;
+    if (res?.unchanged || (prevExported && cloudEngine.state.exported_at === prevExported)) {
+      refreshLastSyncDisplay();
+      return;
+    }
+    if (state.tab === 'settings') {
+      await loadStats();
+      return;
+    }
+    await refreshActiveTab();
+  }
+
   async function maybeBackgroundVerifyCloudFreshness() {
     if (!state.isCloudMode || !cloudEngine) return;
     const prevExported = cloudEngine.state.exported_at || '';
@@ -1979,9 +2020,7 @@
     if (!exportedMs || Date.now() - exportedMs > 3 * 60 * 1000) {
       try {
         const res = await cloudEngine.fetchRemoteState({ forceFresh: true });
-        if (res.exportedAt && res.exportedAt !== prevExported) {
-          await refreshActiveTab();
-        }
+        await refreshAfterBackgroundSync(prevExported, res);
       } catch {
         // Non-fatal background check
       }
@@ -2005,7 +2044,7 @@
         .triggerGithubWorkflow('quick')
         .then(() => cloudEngine.waitForCloudSync(baseExported, { timeoutMs: 45000, intervalMs: 4000 }))
         .then((w) => {
-          if (w.completed) return refreshActiveTab();
+          if (w.completed) return refreshAfterBackgroundSync(baseExported, { unchanged: false });
           return undefined;
         })
         .catch(() => {});
@@ -2048,6 +2087,7 @@
     if ($('tgLongPollingRow')) $('tgLongPollingRow').classList.add('hidden');
     if ($('localSettingsFooter')) $('localSettingsFooter').classList.add('hidden');
     if ($('btnDetectTgChatId')) $('btnDetectTgChatId').classList.remove('hidden');
+    if ($('btnCopyTgChatId')) $('btnCopyTgChatId').classList.remove('hidden');
     if ($('addSourceForm')) $('addSourceForm').classList.add('hidden');
     if ($('cloudSourcesHint')) $('cloudSourcesHint').classList.remove('hidden');
     updateCloudRepoLinksUI(cloudEngine.getCloudSettings().github_repo);
@@ -2058,9 +2098,10 @@
     // Auto-refresh cloud catalog silently every 5 minutes while visible
     setInterval(() => {
       if (document.visibilityState === 'visible') {
+        const prevExp = cloudEngine.state.exported_at || '';
         cloudEngine
           .fetchRemoteState({ forceFresh: true })
-          .then(() => refreshActiveTab())
+          .then((res) => refreshAfterBackgroundSync(prevExp, res))
           .catch(() => {});
       }
     }, 5 * 60 * 1000);
@@ -2071,9 +2112,10 @@
         document.visibilityState === 'visible' &&
         Date.now() - (cloudEngine.lastFetchedAt || 0) > 60 * 1000
       ) {
+        const prevExp = cloudEngine.state.exported_at || '';
         cloudEngine
           .fetchRemoteState({ forceFresh: true })
-          .then(() => refreshActiveTab())
+          .then((res) => refreshAfterBackgroundSync(prevExp, res))
           .catch(() => {});
       }
     });
