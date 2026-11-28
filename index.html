@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0f19" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Instant App Searcher, Filter, Version Tracker &amp; 24/7 Cloud Update Notifier for DailyUploads." />
+  <title>DailyUploads Radar — Smart App Searcher &amp; 24/7 Update Tracker</title>
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">🛰️</div>
+        <div class="brand-text">
+          <h1>DailyUploads Radar</h1>
+          <div class="brand-pills">
+            <a id="sourceHeaderLink" href="https://dailyuploads.net/users/user_hidden" target="_blank" rel="noopener noreferrer" class="source-pill">
+              user_hidden ↗
+            </a>
+            <span id="runtimeModeBadge" class="source-pill badge-cloud hidden" title="Powered by GitHub Actions &amp; GitHub Pages 24/7">☁️ Cloud 24/7</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="nav-tabs" role="tablist" aria-label="Main navigation">
+        <button class="nav-tab active" data-tab="catalog" role="tab">
+          <span>🔍</span> <span>Catalog</span>
+        </button>
+        <button class="nav-tab" data-tab="watchlist" role="tab">
+          <span>⭐</span> <span>Watchlist</span>
+          <span class="badge-pill" id="navWatchCount">0</span>
+        </button>
+        <button class="nav-tab" data-tab="alerts" role="tab">
+          <span>🔔</span> <span>Alerts</span>
+          <span class="badge-pill badge-danger hidden" id="navUnreadCount">0</span>
+        </button>
+        <button class="nav-tab" data-tab="insights" role="tab">
+          <span>📊</span> <span>Insights</span>
+        </button>
+        <button class="nav-tab" data-tab="settings" role="tab">
+          <span>⚙️</span> <span>Settings</span>
+        </button>
+      </nav>
+
+      <div class="topbar-actions">
+        <div class="sync-group">
+          <button id="btnQuickSync" class="btn btn-primary btn-sm" title="Check for new uploads (~1–2s)">
+            <span class="sync-spin" id="btnQuickSyncIcon">🔄</span> <span id="btnQuickSyncLabel">Quick Sync</span>
+          </button>
+          <button id="btnFullSync" class="btn btn-ghost btn-sm" title="Full catalog resync">
+            <span id="btnFullSyncLabel">Full</span>
+          </button>
+        </div>
+        <button id="btnTheme" class="btn btn-icon" title="Switch Dark / Light Theme" aria-label="Toggle theme">☀️</button>
+      </div>
+    </div>
+
+    <div id="syncBanner" class="sync-banner hidden">
+      <div class="sync-banner-inner">
+        <span class="pulse-dot"></span>
+        <span id="syncBannerText">Syncing catalog from DailyUploads...</span>
+        <div class="progress-track">
+          <div id="syncProgressBar" class="progress-fill" style="width: 10%"></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- ═══════════════ TAB: CATALOG ═══════════════ -->
+    <section id="tab-catalog" class="tab-panel active">
+      <div class="kpi-strip">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Files</div>
+          <div class="kpi-val" id="kpiTotalFiles">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Unique Apps</div>
+          <div class="kpi-val" id="kpiTotalApps">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Uploaded Today</div>
+          <div class="kpi-val accent-green" id="kpiToday">—</div>
+        </div>
+        <div class="kpi-card kpi-card-wide-mobile">
+          <div class="kpi-label">Watched</div>
+          <div class="kpi-val accent-amber" id="kpiWatched">—</div>
+        </div>
+        <div class="kpi-card kpi-card-wide-mobile">
+          <div class="kpi-label">Last Sync</div>
+          <div class="kpi-val kpi-val-sm" id="kpiLastSync">—</div>
+          <div class="kpi-sub" id="kpiLastSyncSub"></div>
+        </div>
+      </div>
+
+      <div class="search-panel">
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            id="searchInput"
+            class="search-input"
+            placeholder="Search apps, versions, tags, filenames..."
+            autocomplete="off"
+          />
+          <kbd id="searchKbdHint" class="search-kbd-hint" title="Press / to focus search">/</kbd>
+          <button id="btnClearSearch" class="clear-btn hidden" title="Clear search" aria-label="Clear search">✕</button>
+          <button id="btnWatchQuery" class="btn btn-amber btn-sm hidden" title="Watch this keyword for automatic update alerts">
+            🔔 <span>Watch Keyword</span>
+          </button>
+        </div>
+
+        <div class="quick-chips">
+          <span class="chip-label">Quick:</span>
+          <button class="chip" data-tag="VIP">VIP</button>
+          <button class="chip" data-tag="Pro">Pro</button>
+          <button class="chip" data-tag="Subscribed">Subscribed</button>
+          <button class="chip" data-tag="Premium">Premium</button>
+          <button class="chip" data-tag="Unsigned">Unsigned</button>
+          <button class="chip" data-tag="Universal">Universal</button>
+          <button class="chip" data-tag="iPad">iPad</button>
+          <button class="chip" data-tag="TNT">TNT</button>
+          <button class="chip" data-tag="MacKed">MacKed</button>
+          <button class="chip" data-tag="Incl. DLC">Incl. DLC</button>
+          <button class="chip" data-tag="TrollStore">TrollStore</button>
+        </div>
+
+        <div class="platform-pills" id="platformPills">
+          <button class="pill active" data-platform="all">All</button>
+        </div>
+
+        <div class="filters-row">
+          <label class="filter-field">
+            <span>Sort By</span>
+            <select id="filterSort">
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="downloads">Most Downloaded</option>
+              <option value="name_asc">Name A → Z</option>
+              <option value="name_desc">Name Z → A</option>
+              <option value="size_desc">Largest Size</option>
+              <option value="size_asc">Smallest Size</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>Format</span>
+            <select id="filterExt">
+              <option value="all">All Formats</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>Min iOS</span>
+            <select id="filterMaxIos">
+              <option value="all">Any iOS</option>
+              <option value="13">≤ iOS 13</option>
+              <option value="14">≤ iOS 14</option>
+              <option value="15">≤ iOS 15</option>
+              <option value="16">≤ iOS 16</option>
+              <option value="17">≤ iOS 17</option>
+              <option value="18">≤ iOS 18</option>
+              <option value="26">≤ iOS 26</option>
+              <option value="27">≤ iOS 27</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>Upload Age</span>
+            <select id="filterMaxDays">
+              <option value="all">Any time</option>
+              <option value="0">Today (0d)</option>
+              <option value="3">≤ 3 days</option>
+              <option value="7">≤ 7 days</option>
+              <option value="30">≤ 30 days</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>File Size</span>
+            <select id="filterSize">
+              <option value="all">Any size</option>
+              <option value="0-50">&lt; 50 MB</option>
+              <option value="50-200">50 – 200 MB</option>
+              <option value="200-1024">200 MB – 1 GB</option>
+              <option value="1024-">&gt; 1 GB</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>Tag</span>
+            <select id="filterTag">
+              <option value="all">All Tags</option>
+            </select>
+          </label>
+
+          <label class="filter-field hidden" id="sourceFilterWrap">
+            <span>Source</span>
+            <select id="filterSource">
+              <option value="all">All Sources</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="toolbar-left">
+            <label class="toggle-chip">
+              <input type="checkbox" id="toggleGrouped" checked />
+              <span>Group by App</span>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="toggleWatchedOnly" />
+              <span>Watched Only ⭐</span>
+            </label>
+            <button id="btnResetFilters" class="btn btn-ghost btn-xs">↺ <span>Reset</span></button>
+          </div>
+
+          <div class="toolbar-right">
+            <span id="resultsSummary" class="muted-text">Loading...</span>
+            <div class="segmented">
+              <button id="viewGrid" class="seg-btn active" title="Grid View">⊞</button>
+              <button id="viewTable" class="seg-btn" title="Table View">☰</button>
+            </div>
+            <button id="btnShareSearch" class="btn btn-ghost btn-xs" title="Copy shareable link for current search &amp; filters">🔗 Link</button>
+            <button id="btnExportCsv" class="btn btn-ghost btn-xs" title="Export filtered results to CSV">CSV ↓</button>
+            <button id="btnExportJson" class="btn btn-ghost btn-xs" title="Export filtered results to JSON">JSON ↓</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="catalogContainer" class="cards-grid"></div>
+      <div id="paginationBar" class="pagination-bar"></div>
+    </section>
+
+    <!-- ═══════════════ TAB: WATCHLIST ═══════════════ -->
+    <section id="tab-watchlist" class="tab-panel">
+      <div class="panel-header">
+        <div>
+          <h2>⭐ Watchlist &amp; Update Rules</h2>
+          <p class="muted-text">
+            Bookmark specific apps or add keyword rules. Whenever a matching new upload arrives, Radar alerts you automatically!
+          </p>
+        </div>
+        <div class="header-actions">
+          <button id="btnExportWatchlist" class="btn btn-ghost btn-sm">Export JSON ↓</button>
+          <label class="btn btn-ghost btn-sm file-btn">
+            Import JSON ↑
+            <input type="file" id="importWatchlistInput" accept=".json" hidden />
+          </label>
+        </div>
+      </div>
+
+      <form id="addKeywordForm" class="card form-inline">
+        <div class="form-row">
+          <input type="text" id="kwInput" class="input" placeholder="Add watch keyword (e.g. Spotify, YouTube, Procreate, Minecraft)..." required />
+          <select id="kwPlatform" class="select">
+            <option value="">All Platforms</option>
+            <option value="iOS">iOS</option>
+            <option value="macOS">macOS</option>
+            <option value="Windows">Windows</option>
+            <option value="Archive">Archive</option>
+          </select>
+          <input type="text" id="kwNotes" class="input" placeholder="Optional note (e.g. wait for v10)" />
+          <button type="submit" class="btn btn-primary">+ <span>Add Watch Rule</span></button>
+        </div>
+      </form>
+
+      <div id="watchlistContainer" class="stack-list"></div>
+    </section>
+
+    <!-- ═══════════════ TAB: ALERTS ═══════════════ -->
+    <section id="tab-alerts" class="tab-panel">
+      <div class="panel-header">
+        <div>
+          <h2>🔔 Update Notification Center</h2>
+          <p class="muted-text">
+            Detected version upgrades and fresh uploads matching your watched apps and keyword rules.
+          </p>
+        </div>
+        <div class="header-actions">
+          <button id="btnEnableBrowserNotif" class="btn btn-ghost btn-sm">🔔 Enable Browser Notifications</button>
+          <button id="btnMarkAllRead" class="btn btn-primary btn-sm">✓ Mark All Read</button>
+          <button id="btnClearAlerts" class="btn btn-danger-ghost btn-sm">🗑 Clear History</button>
+        </div>
+      </div>
+
+      <div id="alertsContainer" class="stack-list"></div>
+    </section>
+
+    <!-- ═══════════════ TAB: INSIGHTS & SOURCES ═══════════════ -->
+    <section id="tab-insights" class="tab-panel">
+      <div class="kpi-strip insights-kpi-strip" id="insightsSummaryStrip">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Catalog Size</div>
+          <div class="kpi-val kpi-val-md" id="insCatalogSize">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Total Downloads</div>
+          <div class="kpi-val kpi-val-md" id="insTotalDownloads">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Last 7 Days</div>
+          <div class="kpi-val kpi-val-md accent-green" id="insUploadedWeek">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Active Sources</div>
+          <div class="kpi-val kpi-val-md" id="insSourcesCount">—</div>
+        </div>
+      </div>
+
+      <div class="insights-grid">
+        <div class="card">
+          <h3>🔥 Top Downloaded</h3>
+          <div id="topDownloadedList" class="mini-list"></div>
+        </div>
+        <div class="card">
+          <h3>🔄 Most Frequently Updated Apps</h3>
+          <div id="multiVersionList" class="mini-list"></div>
+        </div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="panel-header compact">
+          <div>
+            <h3>🌐 DailyUploads Sources</h3>
+            <p class="muted-text">Default: <code>user_hidden</code>. You can track additional public DailyUploads users as well.</p>
+          </div>
+        </div>
+        <form id="addSourceForm" class="form-row mt-12">
+          <input type="text" id="newSourceInput" class="input" placeholder="Username or URL (e.g. https://dailyuploads.net/users/username)" required />
+          <button type="submit" class="btn btn-primary">+ Add Source</button>
+        </form>
+        <div id="cloudSourcesHint" class="status-box mt-12 hidden">
+          ☁️ In Cloud Mode, extra sources can be configured via GitHub Repository Variables → <code>EXTRA_SOURCES</code> (comma-separated).
+        </div>
+        <div id="sourcesList" class="stack-list mt-12"></div>
+      </div>
+
+      <div class="card mt-16">
+        <h3>📜 Sync History</h3>
+        <div id="syncLogsContainer" class="table-wrap mt-12"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ TAB: SETTINGS ═══════════════ -->
+    <section id="tab-settings" class="tab-panel">
+      <div id="cloudSettingsCard" class="card hidden" style="margin-bottom:16px;border-color:var(--primary)">
+        <h3>☁️ Cloud Mode Active (GitHub Actions + GitHub Pages 24/7)</h3>
+        <p class="muted-text small-p">
+          This app runs <b>100% serverless on GitHub Cloud</b> without keeping a local PC on! Background scraping runs automatically on a ~15-minute schedule in <b>GitHub Actions</b> (pushed to the zero-bloat <code>radar-state</code> branch), while search, filtering, and sorting run <b>instantly in your browser</b>.
+        </p>
+        <div id="cloudRepoLinks" class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
+          <a id="linkGhActions" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">⚡ Open GitHub Actions (Manual Run / Logs) ↗</a>
+          <a id="linkGhSecrets" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">🔐 Configure Telegram / Webhook Secrets ↗</a>
+          <a id="linkGhWatchlist" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">📝 Edit watchlist.json on GitHub ↗</a>
+        </div>
+
+        <div class="status-box ok mt-12">
+          <b>How to Enable 24/7 Mobile Push Alerts (Telegram / Discord):</b><br />
+          1. Create a bot via <b>@BotFather</b> (copy the Token), send <code>/start</code> to your bot in Telegram, then use <b>🔍 Auto-Detect Chat ID</b> &amp; <b>🧪 Test Telegram</b> below to verify!<br />
+          2. Click <b>🔐 Configure Telegram / Webhook Secrets</b> above → add Repository Secrets <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> (optional: <code>WEBHOOK_URL</code> for Discord).<br />
+          3. To watch apps 24/7 in the cloud: send <code>/watch AppName</code> to your Telegram Bot, <b>or</b> paste an optional GitHub Personal Access Token below so clicking <b>🔔 Watch</b> or <b>🔄 Cloud Sync</b> in this Web UI updates GitHub directly!
+        </div>
+
+        <div class="status-box mt-12">
+          <b>⏱️ About Cloud Auto-Sync Timing &amp; Free Quotas:</b> Public GitHub repositories get <b>unlimited free Actions minutes</b>, and each 15-minute Quick Sync overwrites a single zero-bloat commit on <code>radar-state</code> (skipping GitHub Pages rebuilds when unchanged). For strict exact-minute 15m execution without shared cron queue jitter, run <code>npm run scheduler:install</code> on Windows PC or point a free 24/7 scheduler like <b>cron-job.org</b> at <code id="cloudDispatchEndpointCode">POST https://api.github.com/repos/alfarizigan/dailyuploads-radar/dispatches</code> with body <code>{"event_type":"radar-sync"}</code> and <code>Authorization: Bearer &lt;PAT&gt;</code>.
+        </div>
+
+        <div class="form-group mt-12">
+          <label for="setCloudGhRepo">GitHub Repository (<code>owner/repo</code>)</label>
+          <input type="text" id="setCloudGhRepo" class="input" placeholder="alfarizigan/dailyuploads-radar" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label for="setCloudGhPat">GitHub Personal Access Token (Optional — stored locally in this browser only)</label>
+          <input type="password" id="setCloudGhPat" class="input" placeholder="ghp_... (enables 1-click Web Watchlist sync &amp; live GitHub Actions dispatch)" autocomplete="off" />
+          <small class="muted-text">Requires <code>repo</code> / <code>contents:write</code> &amp; <code>actions:write</code> scope. Leave blank to keep watchlist rules in this browser or manage cloud rules via Telegram <code>/watch</code>.</small>
+        </div>
+        <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" id="btnSaveCloudBridge" class="btn btn-primary btn-sm">💾 Save Cloud Connection</button>
+          <button type="button" id="btnPushWatchlistCloud" class="btn btn-amber btn-sm">☁️ Push Browser Watchlist to GitHub Cloud</button>
+        </div>
+      </div>
+
+      <form id="settingsForm" class="settings-grid">
+        <div class="card" id="localAutoSyncCard">
+          <h3>⏱️ Auto-Sync &amp; Desktop Notifications</h3>
+          <div class="form-group">
+            <label for="setSyncInterval">Auto-Sync Interval (minutes, 0 = disabled)</label>
+            <input type="number" id="setSyncInterval" class="input" min="0" max="1440" value="20" />
+            <small class="muted-text">Quick sync is lightweight (~1–2s, checks page 1 for new uploads).</small>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" id="setWindowsToast" />
+            <span>Enable Windows Desktop Toast Notifications</span>
+          </label>
+          <div class="mt-12">
+            <button type="button" class="btn btn-ghost btn-sm" data-test-channel="windows_toast">🧪 Test Windows Toast</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 id="tgSettingsTitle">✈️ Telegram Bot (Push Alerts + Interactive Search!)</h3>
+          <p class="muted-text small-p" id="tgSettingsDesc">
+            1. Create a bot via <b>@BotFather</b> and copy its Token.<br />
+            2. Enable Interactive Bot below, save, then send <code>/start</code> to your bot to get your <b>Chat ID</b>.<br />
+            3. Use your bot anytime for <code>/search</code>, <code>/latest</code>, <code>/watch</code>, <code>/unwatch</code>, <code>/watchlist</code>, <code>/sync</code>!
+          </p>
+
+          <div id="telegramStatusBox" class="status-box mt-12">Bot Status: —</div>
+
+          <div class="form-group mt-12">
+            <label for="setTgToken">Telegram Bot Token</label>
+            <input type="password" id="setTgToken" class="input" placeholder="123456789:AAF..." autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="setTgChatId">Telegram Chat ID</label>
+            <input type="text" id="setTgChatId" class="input" placeholder="e.g. 123456789 (comma-separated for multiple chats)" />
+          </div>
+          <label class="switch-row" id="tgLongPollingRow">
+            <input type="checkbox" id="setTgEnabled" />
+            <span>Enable Interactive Telegram Bot (Long Polling)</span>
+          </label>
+          <div class="mt-12" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" id="btnDetectTgChatId" class="btn btn-ghost btn-sm hidden">🔍 Auto-Detect Chat ID</button>
+            <button type="button" id="btnCopyTgChatId" class="btn btn-ghost btn-sm hidden">📋 Copy Chat ID</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-test-channel="telegram">🧪 Test Telegram</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>🔗 Discord / Generic Webhook</h3>
+          <p class="muted-text small-p" id="webhookSettingsDesc">
+            Paste a Discord Webhook URL (automatically formatted as rich Embeds) or any custom JSON POST webhook URL.
+          </p>
+          <div class="form-group mt-12">
+            <label for="setWebhookUrl">Webhook URL</label>
+            <input type="url" id="setWebhookUrl" class="input" placeholder="https://discord.com/api/webhooks/..." />
+          </div>
+          <div class="mt-12">
+            <button type="button" class="btn btn-ghost btn-sm" data-test-channel="webhook">🧪 Test Webhook</button>
+          </div>
+        </div>
+
+        <div class="settings-footer" id="localSettingsFooter">
+          <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <!-- ═══════════════ MODAL: APP VERSIONS / DETAILS ═══════════════ -->
+  <div id="versionsModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h3 id="modalAppTitle">App Versions</h3>
+          <div id="modalAppSubtitle" class="muted-text"></div>
+        </div>
+        <div class="modal-header-actions">
+          <button id="modalWatchBtn" class="btn btn-amber btn-sm">🔔 Watch</button>
+          <button id="modalCloseBtn" class="btn btn-icon" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastStack" class="toast-stack"></div>
+
+  <script src="./cloud-engine.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
